@@ -37,6 +37,8 @@ locals {
 # Statements are added in the milestone that first needs them.
 # -----------------------------------------------------------------------------
 data "aws_iam_policy_document" "workload_boundary" {
+  #checkov:skip=CKV_AWS_111:A boundary is a ceiling, not a grant. The SSM agent's calls take no resource ARN (AmazonSSMManagedInstanceCore uses * as well); deletes are tag-conditioned.
+  #checkov:skip=CKV_AWS_356:Same reason: describe calls and the SSM agent's calls do not support resource-level permissions.
   statement {
     sid = "WriteOwnLogs"
     actions = [
@@ -90,6 +92,39 @@ data "aws_iam_policy_document" "workload_boundary" {
     sid       = "PublishAlerts"
     actions   = ["sns:Publish"]
     resources = [local.alert_topic_arn]
+  }
+
+  # M2: the lab's test hosts are managed instances, so the matrix runner can
+  # reach them through SSM Run Command. These are the agent's calls from
+  # AmazonSSMManagedInstanceCore, without its parameter reads.
+  statement {
+    sid = "SsmManagedInstance"
+    actions = [
+      "ssm:DescribeAssociation",
+      "ssm:DescribeDocument",
+      "ssm:GetDeployablePatchSnapshotForInstance",
+      "ssm:GetDocument",
+      "ssm:GetManifest",
+      "ssm:ListAssociations",
+      "ssm:ListInstanceAssociations",
+      "ssm:PutComplianceItems",
+      "ssm:PutConfigurePackageResult",
+      "ssm:PutInventory",
+      "ssm:UpdateAssociationStatus",
+      "ssm:UpdateInstanceAssociationStatus",
+      "ssm:UpdateInstanceInformation",
+      "ssmmessages:CreateControlChannel",
+      "ssmmessages:CreateDataChannel",
+      "ssmmessages:OpenControlChannel",
+      "ssmmessages:OpenDataChannel",
+      "ec2messages:AcknowledgeMessage",
+      "ec2messages:DeleteMessage",
+      "ec2messages:FailMessage",
+      "ec2messages:GetEndpoint",
+      "ec2messages:GetMessages",
+      "ec2messages:SendReply",
+    ]
+    resources = ["*"]
   }
 
   statement {

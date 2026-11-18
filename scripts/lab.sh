@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Deploy, extend, destroy or inspect the session-only lab.
 #
-#   bash scripts/lab.sh deploy [hours]   apply the lab, expiring in 1-10 hours (default 4)
+#   bash scripts/lab.sh deploy [hours]   apply the lab, expiring in 1-10 hours (default 4),
+#                                        then run the connectivity matrix
 #   bash scripts/lab.sh extend <hours>   move the expiry to <hours> from now (tags only)
+#   bash scripts/lab.sh matrix           run the connectivity matrix and save the report
 #   bash scripts/lab.sh destroy          terraform destroy, then fail if anything
 #                                        billable with the lab's tag is still there
 #   bash scripts/lab.sh status           list billable lab resources and their expiry
 #
+# Egress defaults to the NAT gateway; TF_VAR_egress=nat-instance switches it.
+# extend keeps whatever is deployed.
 # The TTL reaper deletes the lab's billable resources once the expiry has
 # passed, or 10 hours after they were created, whichever comes first.
 # Run with an administrator profile: AWS_PROFILE=<profile> bash scripts/lab.sh ...
@@ -16,7 +20,7 @@ cd "$(dirname "$0")/.."
 source scripts/lib.sh
 
 usage() {
-  sed -n '4,8p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '4,11p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -36,9 +40,32 @@ apply() {
   terraform -chdir=infra/lab apply -input=true -var="expires_at=$expires"
 }
 
+# terraform output -json for the matrix runner, outside the repository's tree.
+matrix() {
+  local outputs=infra/lab/.build/outputs.json
+  mkdir -p "$(dirname "$outputs")"
+  terraform -chdir=infra/lab output -json >"$outputs"
+  run_python scripts/matrix.py run --outputs "$outputs" --save docs/results
+}
+
 case "${1:-}" in
-  deploy) apply "${2:-4}" ;;
-  extend) [ -n "${2:-}" ] || usage; apply "$2" ;;
+  deploy)
+    apply "${2:-4}"
+    matrix
+    ;;
+  extend)
+    [ -n "${2:-}" ] || usage
+    if [ -z "${TF_VAR_egress:-}" ]; then
+      tf_init lab
+      TF_VAR_egress=$(terraform -chdir=infra/lab output -raw egress 2>/dev/null || echo nat-gateway)
+      export TF_VAR_egress
+    fi
+    apply "$2"
+    ;;
+  matrix)
+    tf_init lab
+    matrix
+    ;;
   destroy)
     tf_init lab
     # destroy still evaluates the variables; any valid expiry will do.

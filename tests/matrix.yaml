@@ -55,7 +55,7 @@ targets:
     stage: m4
 
 checks:
-  # --- M2: Transit Gateway segmentation and centralised egress -------------
+  # --- M2: Transit Gateway segmentation, centralised IPv4 egress -----------
   - id: spoke-a-to-hub-web
     from: spoke-a
     to: hub-svc
@@ -79,7 +79,7 @@ checks:
     family: ipv6
     expect: allow
     stage: m2
-    reason: The TGW attachments are dual-stack, so IPv6 follows the same route tables.
+    reason: The attachments are dual-stack; spoke A routes the hub's /56 to the TGW, and rt-spokes has it propagated.
   - id: spoke-a-to-spoke-b
     from: spoke-a
     to: spoke-b
@@ -106,7 +106,7 @@ checks:
     expect: deny
     layer: routing
     stage: m2
-    reason: The IPv6 spoke ranges are blackholed too.
+    reason: Spoke A routes only the hub's /56 to the TGW, and spoke B's egress-only gateway admits no inbound connection.
   - id: spoke-a-to-hub-admin
     from: spoke-a
     to: hub-svc
@@ -147,7 +147,7 @@ checks:
     family: ipv6
     expect: allow
     stage: m2
-    reason: IPv6 default route to the hub attachment, then the hub's egress-only internet gateway.
+    reason: IPv6 leaves through spoke A's own egress-only internet gateway; it cannot be centralised (ADR 5).
 
   # --- M3: site-to-site VPN with BGP ----------------------------------------
   - id: onprem-to-hub-web
