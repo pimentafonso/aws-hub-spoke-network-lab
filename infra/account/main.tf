@@ -278,7 +278,7 @@ resource "aws_budgets_budget" "lab" {
 
   cost_filter {
     name   = "TagKeyValue"
-    values = ["user:Project$${var.project_tag}"]
+    values = [format("user:Project$%s", var.project_tag)]
   }
 
   cost_types {
