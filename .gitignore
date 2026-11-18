@@ -1,0 +1,50 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# Local variable files can hold account-specific values
+*.tfvars
+!*.example.tfvars
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Environment and secrets (never commit)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.aws/
+credentials
+
+# Tool output
+.checkov/
+.tflint.d/
+
+# OS and editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Assistant tooling
+.claude/
+
+.terraform-lint/
