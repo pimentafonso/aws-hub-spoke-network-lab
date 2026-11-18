@@ -9,6 +9,8 @@ data "archive_file" "reaper" {
   type        = "zip"
   source_file = "${path.module}/../../src/reaper/handler.py"
   output_path = "${path.module}/.build/reaper.zip"
+  # Same permissions on every OS, so the hash matches between laptop and CI.
+  output_file_mode = "0644"
 }
 
 data "aws_iam_policy_document" "lambda_trust" {
