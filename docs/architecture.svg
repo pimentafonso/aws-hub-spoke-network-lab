@@ -1,0 +1,149 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 790" width="1000" height="790" role="img" aria-labelledby="title desc">
+  <title id="title">aws-hub-spoke-network-lab architecture</title>
+  <desc id="desc">Target architecture in eu-west-1. A hub VPC (10.0.0.0/16 with IPv6) holds an internet gateway, an egress-only internet gateway, a NAT Gateway, a NAT instance and a shared-services test host, and attaches to a Transit Gateway with three route tables: spokes, hub and vpn. Spoke A (10.1.0.0/16) holds an NLB behind a PrivateLink endpoint service and a test host; spoke B (10.2.0.0/16) holds a test host. Spokes reach the hub and the internet through it but not each other. A simulated on-premises VPC (172.16.0.0/16) runs strongSwan and FRR and connects over a site-to-site VPN with two tunnels and BGP; it reaches spoke A but not spoke B. A consumer VPC that reuses spoke A's CIDR reaches spoke A's service only through a PrivateLink endpoint. Evidence comes from a connectivity matrix run through SSM, VPC Flow Logs queried with Athena, and Reachability Analyzer. The always-on account root is built: GitHub Actions, a read-only plan role through the existing OIDC provider, S3 state, a TTL reaper Lambda and a budget. The lab components shown dashed amber come next, in M2; dashed grey ones follow in M3 and M4.</desc>
+  <style>
+    .bg { fill: #f4f6f8; }
+    .box { fill: #ffffff; stroke: #5b6774; stroke-width: 1.3; stroke-dasharray: 5 4; }
+    .box.built { fill: #e2f3ef; stroke: #0b7a68; stroke-dasharray: none; stroke-width: 1.6; }
+    .box.next { fill: #fbf0e1; stroke: #b4660b; }
+    .zone { fill: none; stroke: #c7d0da; stroke-width: 1.2; }
+    .t { fill: #16202b; font-family: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif; font-size: 13px; font-weight: 600; }
+    .s, .el { fill: #5b6774; font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; font-size: 11px; }
+    .z { fill: #5b6774; font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; }
+    .e { stroke: #16202b; stroke-width: 1.3; fill: none; }
+    .e.vpn { stroke-dasharray: 2 3; stroke-width: 1.6; }
+    .e.deny { stroke: #b3261e; stroke-dasharray: 5 4; }
+    .el.deny { fill: #b3261e; }
+    .head { fill: #16202b; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #0f151b; }
+      .box { fill: #161e26; stroke: #93a0ad; }
+      .box.built { fill: #143029; stroke: #45c7ae; }
+      .box.next { fill: #33261a; stroke: #f0a64a; }
+      .zone { stroke: #2e3a46; }
+      .t { fill: #e3e9ef; }
+      .s, .el, .z { fill: #93a0ad; }
+      .e { stroke: #e3e9ef; }
+      .e.deny { stroke: #f2877f; }
+      .el.deny { fill: #f2877f; }
+      .head { fill: #e3e9ef; }
+    }
+  </style>
+  <rect class="bg" x="0" y="0" width="1000" height="790"/>
+
+          <defs>
+            <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path class="head" d="M0,0 L10,5 L0,10 z"/>
+            </marker>
+          </defs>
+
+          <text class="z" x="20" y="34">aws-hub-spoke-network-lab · target · one session in eu-west-1 · Terraform</text>
+
+          <!-- Internet -->
+          <rect class="box next" x="420" y="48" width="160" height="40" rx="6"/>
+          <text class="t" x="500" y="73" text-anchor="middle">Internet</text>
+          <line class="e" x1="500" y1="88" x2="500" y2="108" marker-end="url(#a1)"/>
+
+          <!-- Hub VPC -->
+          <rect class="zone" x="200" y="110" width="600" height="105" rx="10"/>
+          <text class="z" x="216" y="131">Hub VPC · 10.0.0.0/16 + IPv6 /56 · shared services and egress</text>
+          <rect class="box next" x="215" y="142" width="140" height="56" rx="6"/>
+          <text class="t" x="285" y="165" text-anchor="middle">IGW · egress-only</text>
+          <text class="s" x="285" y="183" text-anchor="middle">IPv4 · IPv6 out only</text>
+          <rect class="box next" x="370" y="142" width="130" height="56" rx="6"/>
+          <text class="t" x="435" y="165" text-anchor="middle">NAT Gateway</text>
+          <text class="s" x="435" y="183" text-anchor="middle">$0.048/h + per GB</text>
+          <rect class="box next" x="515" y="142" width="130" height="56" rx="6"/>
+          <text class="t" x="580" y="165" text-anchor="middle">NAT instance</text>
+          <text class="s" x="580" y="183" text-anchor="middle">t4g.micro $0.0092/h</text>
+          <rect class="box next" x="660" y="142" width="125" height="56" rx="6"/>
+          <text class="t" x="722" y="165" text-anchor="middle">Shared svc</text>
+          <text class="s" x="722" y="183" text-anchor="middle">test host</text>
+
+          <!-- Transit Gateway -->
+          <line class="e" x1="500" y1="215" x2="500" y2="253" marker-start="url(#a1)" marker-end="url(#a1)"/>
+          <rect class="box next" x="370" y="255" width="260" height="60" rx="6"/>
+          <text class="t" x="500" y="279" text-anchor="middle">Transit Gateway</text>
+          <text class="s" x="500" y="297" text-anchor="middle">route tables: spokes · hub · vpn</text>
+
+          <path class="e" d="M420,315 L420,340 L170,340 L170,368" marker-end="url(#a1)"/>
+          <line class="e" x1="500" y1="315" x2="500" y2="368" marker-end="url(#a1)"/>
+          <path class="e vpn" d="M580,315 L580,340 L830,340 L830,368" marker-end="url(#a1)"/>
+          <text class="el" x="705" y="358" text-anchor="middle">VPN · 2 tunnels · BGP</text>
+
+          <!-- Spokes and on-prem -->
+          <rect class="zone" x="20" y="370" width="300" height="110" rx="10"/>
+          <text class="z" x="36" y="391">Spoke A · 10.1.0.0/16 + IPv6</text>
+          <rect class="box" x="35" y="402" width="120" height="56" rx="6"/>
+          <text class="t" x="95" y="425" text-anchor="middle">NLB</text>
+          <text class="s" x="95" y="443" text-anchor="middle">endpoint service</text>
+          <rect class="box next" x="170" y="402" width="135" height="56" rx="6"/>
+          <text class="t" x="237" y="425" text-anchor="middle">Test host</text>
+          <text class="s" x="237" y="443" text-anchor="middle">:80 · :8443</text>
+
+          <rect class="zone" x="350" y="370" width="300" height="110" rx="10"/>
+          <text class="z" x="366" y="391">Spoke B · 10.2.0.0/16 + IPv6</text>
+          <rect class="box next" x="420" y="402" width="160" height="56" rx="6"/>
+          <text class="t" x="500" y="425" text-anchor="middle">Test host</text>
+          <text class="s" x="500" y="443" text-anchor="middle">:80 · :8443</text>
+
+          <rect class="zone" x="680" y="370" width="300" height="110" rx="10"/>
+          <text class="z" x="696" y="391">On-prem (simulated) · 172.16.0.0/16</text>
+          <rect class="box" x="700" y="402" width="260" height="56" rx="6"/>
+          <text class="t" x="830" y="425" text-anchor="middle">strongSwan + FRR</text>
+          <text class="s" x="830" y="443" text-anchor="middle">t4g.micro · router and test host</text>
+
+          <!-- Expected denies -->
+          <line class="e deny" x1="305" y1="466" x2="420" y2="466"/>
+          <text class="el deny" x="335" y="498" text-anchor="middle">spoke ↔ spoke blackholed</text>
+          <line class="e deny" x1="580" y1="466" x2="700" y2="466"/>
+          <text class="el deny" x="665" y="498" text-anchor="middle">on-prem ↛ spoke B</text>
+
+          <!-- Consumer VPC -->
+          <rect class="zone" x="20" y="520" width="300" height="100" rx="10"/>
+          <text class="z" x="36" y="541">Consumer VPC · 10.1.0.0/16 (overlaps A)</text>
+          <rect class="box" x="35" y="552" width="270" height="56" rx="6"/>
+          <text class="t" x="170" y="575" text-anchor="middle">PrivateLink endpoint</text>
+          <text class="s" x="170" y="593" text-anchor="middle">interface endpoint · no routes needed</text>
+          <path class="e" d="M35,580 L10,580 L10,430 L33,430" marker-end="url(#a1)"/>
+
+          <!-- Evidence -->
+          <rect class="zone" x="350" y="520" width="630" height="100" rx="10"/>
+          <text class="z" x="366" y="541">Evidence</text>
+          <rect class="box next" x="365" y="552" width="190" height="56" rx="6"/>
+          <text class="t" x="460" y="575" text-anchor="middle">Matrix runner</text>
+          <text class="s" x="460" y="593" text-anchor="middle">SSM Run Command · 19 checks</text>
+          <rect class="box" x="570" y="552" width="200" height="56" rx="6"/>
+          <text class="t" x="670" y="575" text-anchor="middle">Flow logs → S3 → Athena</text>
+          <text class="s" x="670" y="593" text-anchor="middle">REJECT rows for SG denies</text>
+          <rect class="box" x="785" y="552" width="180" height="56" rx="6"/>
+          <text class="t" x="875" y="575" text-anchor="middle">Reachability Analyzer</text>
+          <text class="s" x="875" y="593" text-anchor="middle">$0.10 per analysis</text>
+
+          <!-- Always-on account root -->
+          <text class="z" x="20" y="662">Always on · account root · about $0/h · GitHub OIDC, no stored keys</text>
+          <rect class="box built" x="20" y="674" width="180" height="56" rx="6"/>
+          <text class="t" x="110" y="697" text-anchor="middle">GitHub Actions</text>
+          <text class="s" x="110" y="715" text-anchor="middle">lint · tests · plan</text>
+          <rect class="box built" x="225" y="674" width="165" height="56" rx="6"/>
+          <text class="t" x="307" y="697" text-anchor="middle">STS · plan role</text>
+          <text class="s" x="307" y="715" text-anchor="middle">existing OIDC provider</text>
+          <rect class="box built" x="415" y="674" width="145" height="56" rx="6"/>
+          <text class="t" x="487" y="697" text-anchor="middle">S3 state</text>
+          <text class="s" x="487" y="715" text-anchor="middle">use_lockfile</text>
+          <rect class="box built" x="585" y="674" width="205" height="56" rx="6"/>
+          <text class="t" x="687" y="697" text-anchor="middle">TTL reaper</text>
+          <text class="s" x="687" y="715" text-anchor="middle">Lambda · every 15 min · 10 h cap</text>
+          <rect class="box built" x="815" y="674" width="165" height="56" rx="6"/>
+          <text class="t" x="897" y="697" text-anchor="middle">Budget alarm</text>
+          <text class="s" x="897" y="715" text-anchor="middle">$10/month on the tag</text>
+          <line class="e" x1="200" y1="702" x2="223" y2="702" marker-end="url(#a1)"/>
+          <line class="e" x1="390" y1="702" x2="413" y2="702" marker-end="url(#a1)"/>
+
+  <g transform="translate(20,756)">
+    <rect class="box built" x="0" y="0" width="22" height="14" rx="3"/><text class="s" x="30" y="11">Deployed</text>
+    <rect class="box next" x="120" y="0" width="22" height="14" rx="3"/><text class="s" x="150" y="11">Next milestone</text>
+    <rect class="box" x="270" y="0" width="22" height="14" rx="3"/><text class="s" x="300" y="11">Planned</text>
+    <line class="e deny" x1="390" y1="7" x2="412" y2="7"/><text class="s" x="420" y="11">Expected deny in the connectivity matrix</text>
+  </g>
+</svg>

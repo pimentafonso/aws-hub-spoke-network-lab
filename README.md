@@ -25,29 +25,14 @@ it and destroys it.
 - **Evidence.** VPC Flow Logs in S3 queried with Athena, Reachability Analyzer
   for selected paths, and the real cost per session from the AWS bill.
 
-## Planned architecture
+## Architecture
 
-```
-                         Internet
-                IGW (IPv4)  |  egress-only IGW (IPv6)
-              +-------------+--------------+
-              | Hub 10.0.0.0/16 + IPv6     |  NAT Gateway, NAT instance,
-              | shared services            |  flow logs to S3
-              +-------------+--------------+
-                            |
-                    +-------+-------+   route tables:
-                    |Transit Gateway|     spokes: hub and on-prem, never each other
-                    +--+----+----+--+     hub:    everything
-                       |    |    |        vpn:    hub and spoke A only
-             Spoke A --+    |    +-- Spoke B
-         10.1.0.0/16        |        10.2.0.0/16
-         NLB + service      |
-              ^        VPN, 2 tunnels, BGP
-              |             |
-              |        On-prem 172.16.0.0/16 (strongSwan + FRR)
-              |
-         PrivateLink endpoint in a consumer VPC, also 10.1.0.0/16
-```
+![Target architecture: a hub VPC with NAT and egress-only internet gateway attached to a Transit Gateway with three route tables; spokes A and B reach the hub but not each other; a simulated on-premises VPC connects over a two-tunnel VPN with BGP and reaches spoke A only; a consumer VPC with spoke A's CIDR reaches spoke A's NLB through PrivateLink; the always-on account root holds the plan role, state, TTL reaper and budget](docs/architecture.svg)
+
+Solid boxes are deployed, dashed amber boxes come in the next milestone and
+dashed grey boxes later. Red dashed lines are connections the matrix expects
+to fail. Today only the always-on account root exists; the lab itself is
+deployed for one session at a time.
 
 | Area | Services |
 |---|---|
@@ -137,6 +122,7 @@ tests/matrix.yaml connectivity matrix, the test contract
 tests/unit/       unit tests (the reaper runs against moto)
 scripts/          lab.sh, account and state setup, matrix tool, lint
 docs/adr/         architecture decision records
+docs/architecture.svg  the diagram above, updated after every milestone
 ```
 
 ## Setting up an account
