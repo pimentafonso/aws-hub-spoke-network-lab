@@ -5,9 +5,9 @@ centralised egress, site-to-site VPN with BGP, PrivateLink across overlapping
 CIDRs, and an automated connectivity test. Each session deploys it, measures
 it and destroys it.
 
-> **Status:** work in progress (M0, repository bootstrap). Nothing is deployed
-> yet, so this README has no results. Every number added later will be measured,
-> with how and when.
+> **Status:** work in progress (M2 next: VPCs, Transit Gateway, egress). The
+> safety net is live; the lab itself has not been deployed yet. Every number
+> here is measured, with how and when.
 
 ## What it will show
 
@@ -65,8 +65,8 @@ Each milestone is one session. Costs are estimates from the AWS Price List
 
 | | Milestone | Deployed | Estimate | Status |
 |---|---|---|---|---|
-| M0 | Repository bootstrap: layout, connectivity matrix format, lint and tests in CI, ADRs | 0 h | $0 | in progress |
-| M1 | Account root: state, GitHub plan role, boundary, TTL reaper, budget | ~0.5 h | ~$0.01 | planned |
+| M0 | Repository bootstrap: layout, connectivity matrix format, lint and tests in CI, ADRs | 0 h | $0 | done |
+| M1 | Account root: state, GitHub plan role, boundary, TTL reaper, budget | ~0.5 h | ~$0.01 | done |
 | M2 | VPCs, Transit Gateway segmentation, centralised egress, matrix runner | ~2.5 h | ~$0.65 | planned |
 | M3 | Site-to-site VPN with BGP, tunnel failover measurement | ~3 h | ~$1.10 | planned |
 | M4 | PrivateLink across overlapping CIDRs, flow logs with Athena, Reachability Analyzer | ~3 h | ~$2.10 | planned |
@@ -97,21 +97,72 @@ fails on any difference.
 
 ## Cost control
 
-The lab costs about $0.42 an hour while deployed, so it never stays up. Every
-resource carries an `ExpiresAt` tag, and Terraform refuses to deploy without
-one. From M1, a reaper function deletes anything past its expiry every 15
-minutes, and a budget alarm backs it up. See
-[ADR 2](docs/adr/0002-session-only-lab-and-safety-net.md).
+The lab costs about $0.42 an hour while deployed, so it never stays up. Four
+independent layers make sure of it
+([ADR 2](docs/adr/0002-session-only-lab-and-safety-net.md)):
+
+1. **Scripted destroy.** `scripts/lab.sh destroy` runs `terraform destroy`,
+   then fails if any billable resource with the lab's tag is left.
+2. **Expiry tag.** Every resource carries `ExpiresAt`, 4 hours after deploy by
+   default. Terraform rejects an expiry that is missing, past, or more than 10
+   hours away.
+3. **TTL reaper.** A Lambda function runs every 15 minutes and deletes the
+   lab's billable resources once `ExpiresAt` has passed, or 10 hours after
+   they were created, whatever the tag says. It can only delete resources
+   carrying the lab's tag, and it emails what it did.
+4. **Budget.** A $10 monthly budget on the lab's tag, before credits, emails at
+   50%, 100% and 100% forecast. Billing data is 8 to 24 hours late, so this is
+   the last resort.
+
+**Measured, 18 November 2026.** I allocated one Elastic IP tagged with the
+lab's project and an `ExpiresAt` 5 minutes ahead (18:50:52 UTC), then left it.
+The next scheduled reaper run started at 19:00:33 and released it at
+19:00:37.9, from the reaper's CloudWatch log: 9 min 45 s from expiry to
+deletion, within the 15-minute schedule. A run with nothing to delete takes
+4 to 5.5 s. The worst case for a lab is the time to the next run plus the
+deletion passes; M5 measures that on a full lab.
+
+```
+$ bash scripts/lab.sh status
+0 billable lab resource(s) found.
+```
 
 ## Repository layout
 
 ```
 infra/lab/        Terraform root for the session-only lab
-infra/account/    always-on account resources (from M1)
+infra/account/    always-on account resources: plan role, boundary, reaper, budget
+src/reaper/       the TTL reaper Lambda function
 tests/matrix.yaml connectivity matrix, the test contract
-tests/unit/       unit tests for the scripts
-scripts/          lint, matrix tool and (from M1) deploy and destroy
+tests/unit/       unit tests (the reaper runs against moto)
+scripts/          lab.sh, account and state setup, matrix tool, lint
 docs/adr/         architecture decision records
+```
+
+## Setting up an account
+
+Once per account, with an administrator profile. The account must already have
+the GitHub OIDC provider (`token.actions.githubusercontent.com`); this project
+reads it and never creates it.
+
+```bash
+export AWS_PROFILE=<admin profile>
+bash scripts/bootstrap-state.sh                         # state bucket, about $0.01 a month
+ALERT_EMAIL=<address> bash scripts/account.sh apply     # boundary, plan role, reaper, budget
+```
+
+Then confirm the SNS subscription email, and activate `Project` as a cost
+allocation tag in Billing (the budget filters on it; it takes up to 24 hours
+to apply). For plan on pull requests, add the repository secrets
+`AWS_ACCOUNT_ID` and `ALERT_EMAIL`.
+
+## Running a lab session
+
+```bash
+bash scripts/lab.sh deploy 4     # expires in 4 hours (1-10)
+bash scripts/lab.sh status       # billable resources and their expiry
+bash scripts/lab.sh extend 2     # expiry moves to 2 hours from now
+bash scripts/lab.sh destroy      # destroy, then check nothing billable is left
 ```
 
 ## Running the checks locally
@@ -135,6 +186,7 @@ Checkov and pytest pin conflicting versions of `packaging`.
 - [ADR 1: Terraform, with a session-only lab root and an always-on account root](docs/adr/0001-terraform-and-module-layout.md)
 - [ADR 2: Session-only lab with a layered safety net](docs/adr/0002-session-only-lab-and-safety-net.md)
 - [ADR 3: A connectivity matrix as the test contract](docs/adr/0003-connectivity-matrix-as-test-contract.md)
+- [ADR 4: Terraform state and GitHub access to AWS](docs/adr/0004-state-and-github-access.md)
 
 ## Licence
 

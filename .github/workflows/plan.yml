@@ -1,0 +1,115 @@
+name: Terraform plan
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - "scripts/lib.sh"
+      - "src/reaper/**"
+      - ".github/workflows/plan.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Plan (${{ matrix.root }})
+    # Pull requests from forks get no OIDC token or secrets, so they skip this.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # OIDC token for AWS
+      pull-requests: write # plan summary comment
+    strategy:
+      fail-fast: false
+      matrix:
+        root: [account, lab]
+    env:
+      ROOT: ${{ matrix.root }}
+      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      # Only the account root needs it, for the alert subscription and budget.
+      ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.17.1
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/nwlab-github-plan
+          role-session-name: plan-${{ github.run_id }}
+          aws-region: eu-west-1
+
+      - name: Init
+        run: >-
+          terraform -chdir="infra/${ROOT}" init -input=false
+          -backend-config="bucket=${AWS_ACCOUNT_ID}-nwlab-tfstate"
+
+      # Read only: -lock=false because the plan role cannot write the lock file.
+      # Exit code 0 = no changes, 2 = changes, 1 = error.
+      - name: Plan
+        id: plan
+        run: |
+          args=()
+          if [ "$ROOT" = account ]; then
+            args+=(-var="state_bucket=${AWS_ACCOUNT_ID}-nwlab-tfstate" -var="alert_email=${ALERT_EMAIL}")
+          else
+            # The lab needs an expiry within 10 hours; any will do for a plan.
+            args+=(-var="expires_at=$(date -u -d '+4 hours' +%Y-%m-%dT%H:%M:%SZ)")
+          fi
+          set +e
+          terraform -chdir="infra/${ROOT}" plan -input=false -lock=false -no-color \
+            -detailed-exitcode -out=tfplan "${args[@]}"
+          code=$?
+          set -e
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+          [ "$code" -ne 1 ]
+
+      # The comment lists resource addresses and actions only. The full plan
+      # stays in this job's log, where GitHub masks the account ID.
+      - name: Comment the summary on the pull request
+        if: always() && steps.plan.outcome != 'skipped'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODE: ${{ steps.plan.outputs.exitcode }}
+          PR: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          marker="<!-- terraform-plan:${ROOT} -->"
+          {
+            echo "$marker"
+            echo "### Terraform plan: \`infra/${ROOT}\`"
+            echo
+            if [ "$CODE" = 0 ]; then
+              echo "No changes."
+            elif [ "$CODE" = 2 ]; then
+              terraform -chdir="infra/${ROOT}" show -json tfplan | jq -r '
+                [.resource_changes[]? | select(.mode == "managed" and .change.actions != ["no-op"])] as $c
+                | "\($c | map(select(.change.actions | index("create"))) | length) to add, "
+                  + "\($c | map(select(.change.actions == ["update"])) | length) to change, "
+                  + "\($c | map(select(.change.actions | index("delete"))) | length) to destroy.\n",
+                  "<details><summary>Resources</summary>\n",
+                  ($c[] | "- `\(.change.actions | join("/"))` \(.address)"),
+                  "\n</details>"'
+            else
+              echo "Plan failed."
+            fi
+            echo
+            echo "Full plan in the [job log]($RUN_URL)."
+          } > comment.md
+          id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" -F body=@comment.md >/dev/null
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" -F body=@comment.md >/dev/null
+          fi
