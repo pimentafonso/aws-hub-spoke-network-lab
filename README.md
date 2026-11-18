@@ -5,9 +5,9 @@ centralised egress, site-to-site VPN with BGP, PrivateLink across overlapping
 CIDRs, and an automated connectivity test. Each session deploys it, measures
 it and destroys it.
 
-> **Status:** work in progress (M1, account root and safety net). The lab has
-> not been deployed yet, so this README has no lab results. Every number added
-> later will be measured, with how and when.
+> **Status:** work in progress (M2 next: VPCs, Transit Gateway, egress). The
+> safety net is live; the lab itself has not been deployed yet. Every number
+> here is measured, with how and when.
 
 ## What it will show
 
@@ -66,7 +66,7 @@ Each milestone is one session. Costs are estimates from the AWS Price List
 | | Milestone | Deployed | Estimate | Status |
 |---|---|---|---|---|
 | M0 | Repository bootstrap: layout, connectivity matrix format, lint and tests in CI, ADRs | 0 h | $0 | done |
-| M1 | Account root: state, GitHub plan role, boundary, TTL reaper, budget | ~0.5 h | ~$0.01 | in progress |
+| M1 | Account root: state, GitHub plan role, boundary, TTL reaper, budget | ~0.5 h | ~$0.01 | done |
 | M2 | VPCs, Transit Gateway segmentation, centralised egress, matrix runner | ~2.5 h | ~$0.65 | planned |
 | M3 | Site-to-site VPN with BGP, tunnel failover measurement | ~3 h | ~$1.10 | planned |
 | M4 | PrivateLink across overlapping CIDRs, flow logs with Athena, Reachability Analyzer | ~3 h | ~$2.10 | planned |
@@ -113,6 +113,14 @@ independent layers make sure of it
 4. **Budget.** A $10 monthly budget on the lab's tag, before credits, emails at
    50%, 100% and 100% forecast. Billing data is 8 to 24 hours late, so this is
    the last resort.
+
+**Measured, 18 November 2026.** I allocated one Elastic IP tagged with the
+lab's project and an `ExpiresAt` 5 minutes ahead (18:50:52 UTC), then left it.
+The next scheduled reaper run started at 19:00:33 and released it at
+19:00:37.9, from the reaper's CloudWatch log: 9 min 45 s from expiry to
+deletion, within the 15-minute schedule. A run with nothing to delete takes
+4 to 5.5 s. The worst case for a lab is the time to the next run plus the
+deletion passes; M5 measures that on a full lab.
 
 ```
 $ bash scripts/lab.sh status
