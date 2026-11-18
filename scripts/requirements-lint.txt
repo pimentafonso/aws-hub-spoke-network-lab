@@ -1,0 +1,3 @@
+# Linters, pinned. CI installs these; locally: pip install --user -r scripts/requirements-lint.txt
+checkov==3.4.5
+ruff==0.17.5
