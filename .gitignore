@@ -48,3 +48,6 @@ Thumbs.db
 .claude/
 
 .terraform-lint/
+
+# Lambda packages built by Terraform
+.build/
