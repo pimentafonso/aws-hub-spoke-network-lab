@@ -15,10 +15,10 @@ select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
 "tests/**" = ["S101"]
 
 [tool.pytest.ini_options]
-pythonpath = ["scripts"]
+pythonpath = ["scripts", "src"]
 testpaths = ["tests"]
 addopts = "-q"
 
 [tool.ruff.lint.isort]
 # The test and measurement scripts are imported by the tests as modules.
-known-first-party = ["matrix"]
+known-first-party = ["matrix", "reaper"]
