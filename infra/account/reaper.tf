@@ -128,7 +128,7 @@ resource "aws_lambda_function" "reaper" {
   handler          = "handler.handler"
   filename         = data.archive_file.reaper.output_path
   source_code_hash = data.archive_file.reaper.output_base64sha256
-  memory_size      = 128
+  memory_size      = 256
   timeout          = 600
 
   environment {
@@ -190,8 +190,9 @@ resource "aws_iam_role" "reaper_scheduler" {
 
 data "aws_iam_policy_document" "reaper_scheduler" {
   statement {
-    actions   = ["lambda:InvokeFunction"]
-    resources = [aws_lambda_function.reaper.arn]
+    actions = ["lambda:InvokeFunction"]
+    # Built from the name, so a code change does not re-read this policy.
+    resources = ["arn:${local.partition}:lambda:${local.region}:${local.account_id}:function:${var.prefix}-reaper"]
   }
 }
 
