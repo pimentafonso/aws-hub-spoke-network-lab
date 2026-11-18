@@ -1,0 +1,222 @@
+# Connectivity matrix: the lab's test contract.
+#
+# Every row is one TCP connection attempt from a test instance and the result
+# the design expects. After each deploy, scripts/matrix.py runs the rows for the
+# deployed stage through SSM Run Command and fails on any difference.
+#
+# A deny row names the layer that should stop the traffic:
+#   security-group  dropped at the destination, so VPC Flow Logs show REJECT
+#   routing         no route (TGW blackhole, missing propagation, isolated VPC
+#                   or overlapping CIDR), so the packet never reaches the
+#                   destination VPC and its flow logs have no record of it
+#
+# Stages are cumulative: running stage m3 runs every m2 and m3 row.
+
+version: 1
+
+stages: [m2, m3, m4]
+
+# Test instances. Every one listens on TCP 80 (web) and 8443 (admin).
+# Security groups allow 80 from all lab ranges and 8443 only from the hub.
+hosts:
+  hub-svc:
+    vpc: hub
+    families: [ipv4, ipv6]
+    stage: m2
+  spoke-a:
+    vpc: spoke-a
+    families: [ipv4, ipv6]
+    stage: m2
+  spoke-b:
+    vpc: spoke-b
+    families: [ipv4, ipv6]
+    stage: m2
+  onprem:
+    vpc: onprem
+    families: [ipv4] # the VPN carries IPv4 only
+    stage: m3
+  consumer:
+    vpc: consumer
+    families: [ipv4]
+    stage: m4
+
+# Destinations that are not test instances.
+targets:
+  internet:
+    # AWS-owned, dual-stack and outside every lab VPC.
+    address: s3.dualstack.eu-west-1.amazonaws.com
+    families: [ipv4, ipv6]
+    stage: m2
+  privatelink:
+    # Resolved at run time from the interface endpoint's DNS name in the
+    # consumer VPC; the endpoint service fronts spoke-a through an NLB.
+    address: output:privatelink_endpoint_dns
+    families: [ipv4]
+    stage: m4
+
+checks:
+  # --- M2: Transit Gateway segmentation and centralised egress -------------
+  - id: spoke-a-to-hub-web
+    from: spoke-a
+    to: hub-svc
+    port: 80
+    family: ipv4
+    expect: allow
+    stage: m2
+    reason: rt-spokes has the hub attachment's routes propagated.
+  - id: spoke-b-to-hub-web
+    from: spoke-b
+    to: hub-svc
+    port: 80
+    family: ipv4
+    expect: allow
+    stage: m2
+    reason: rt-spokes has the hub attachment's routes propagated.
+  - id: spoke-a-to-hub-web-v6
+    from: spoke-a
+    to: hub-svc
+    port: 80
+    family: ipv6
+    expect: allow
+    stage: m2
+    reason: The TGW attachments are dual-stack, so IPv6 follows the same route tables.
+  - id: spoke-a-to-spoke-b
+    from: spoke-a
+    to: spoke-b
+    port: 80
+    family: ipv4
+    expect: deny
+    layer: routing
+    stage: m2
+    reason: rt-spokes blackholes the spoke ranges, so spokes cannot reach each other.
+  - id: spoke-b-to-spoke-a
+    from: spoke-b
+    to: spoke-a
+    port: 80
+    family: ipv4
+    expect: deny
+    layer: routing
+    stage: m2
+    reason: rt-spokes blackholes the spoke ranges, so spokes cannot reach each other.
+  - id: spoke-a-to-spoke-b-v6
+    from: spoke-a
+    to: spoke-b
+    port: 80
+    family: ipv6
+    expect: deny
+    layer: routing
+    stage: m2
+    reason: The IPv6 spoke ranges are blackholed too.
+  - id: spoke-a-to-hub-admin
+    from: spoke-a
+    to: hub-svc
+    port: 8443
+    family: ipv4
+    expect: deny
+    layer: security-group
+    stage: m2
+    reason: The route exists, but the admin port accepts the hub range only.
+  - id: hub-to-spoke-a-admin
+    from: hub-svc
+    to: spoke-a
+    port: 8443
+    family: ipv4
+    expect: allow
+    stage: m2
+    reason: Shared services may manage the spokes.
+  - id: spoke-a-to-internet
+    from: spoke-a
+    to: internet
+    port: 443
+    family: ipv4
+    expect: allow
+    stage: m2
+    reason: Default route to the hub attachment, then the hub's NAT.
+  - id: spoke-b-to-internet
+    from: spoke-b
+    to: internet
+    port: 443
+    family: ipv4
+    expect: allow
+    stage: m2
+    reason: Default route to the hub attachment, then the hub's NAT.
+  - id: spoke-a-to-internet-v6
+    from: spoke-a
+    to: internet
+    port: 443
+    family: ipv6
+    expect: allow
+    stage: m2
+    reason: IPv6 default route to the hub attachment, then the hub's egress-only internet gateway.
+
+  # --- M3: site-to-site VPN with BGP ----------------------------------------
+  - id: onprem-to-hub-web
+    from: onprem
+    to: hub-svc
+    port: 80
+    family: ipv4
+    expect: allow
+    stage: m3
+    reason: rt-vpn has the hub's routes propagated, advertised to on-prem over BGP.
+  - id: onprem-to-spoke-a-web
+    from: onprem
+    to: spoke-a
+    port: 80
+    family: ipv4
+    expect: allow
+    stage: m3
+    reason: rt-vpn has spoke A's routes propagated.
+  - id: onprem-to-spoke-b-web
+    from: onprem
+    to: spoke-b
+    port: 80
+    family: ipv4
+    expect: deny
+    layer: routing
+    stage: m3
+    reason: rt-vpn does not propagate spoke B, so on-prem never learns its range.
+  - id: spoke-a-to-onprem-web
+    from: spoke-a
+    to: onprem
+    port: 80
+    family: ipv4
+    expect: allow
+    stage: m3
+    reason: rt-spokes has the VPN attachment's BGP routes propagated.
+  - id: spoke-b-to-onprem-web
+    from: spoke-b
+    to: onprem
+    port: 80
+    family: ipv4
+    expect: deny
+    layer: routing
+    stage: m3
+    reason: The return path does not exist, because on-prem has no route to spoke B.
+
+  # --- M4: PrivateLink across an overlapping CIDR ---------------------------
+  - id: consumer-to-privatelink
+    from: consumer
+    to: privatelink
+    port: 80
+    family: ipv4
+    expect: allow
+    stage: m4
+    reason: The interface endpoint is local to the consumer VPC; the NLB reaches spoke A.
+  - id: consumer-to-spoke-a-direct
+    from: consumer
+    to: spoke-a
+    port: 80
+    family: ipv4
+    expect: deny
+    layer: routing
+    stage: m4
+    reason: The consumer VPC uses spoke A's CIDR, so spoke A's address is local and no route can reach it.
+  - id: consumer-to-internet
+    from: consumer
+    to: internet
+    port: 443
+    family: ipv4
+    expect: deny
+    layer: routing
+    stage: m4
+    reason: The consumer VPC has no internet or NAT gateway and no TGW attachment.
