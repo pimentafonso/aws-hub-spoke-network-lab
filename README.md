@@ -5,18 +5,20 @@ centralised egress, site-to-site VPN with BGP, PrivateLink across overlapping
 CIDRs, and an automated connectivity test. Each session deploys it, measures
 it and destroys it.
 
-> **Status:** work in progress (M2 next: VPCs, Transit Gateway, egress). The
-> safety net is live; the lab itself has not been deployed yet. Every number
-> here is measured, with how and when.
+> **Status:** work in progress. M2 (VPCs, Transit Gateway, egress, matrix
+> runner) is built and planned, and has not been deployed yet. The safety net
+> is live. Every number here is measured, with how and when.
 
 ## What it will show
 
 - **Segmentation with Transit Gateway route tables.** Two spokes reach shared
   services in the hub but not each other. The simulated on-premises network
   reaches the hub and one spoke only.
-- **Centralised egress.** Spokes reach the internet through the hub. IPv4 goes
-  through NAT; IPv6 goes through an egress-only internet gateway. A NAT Gateway
-  and a NAT instance are compared on cost.
+- **Centralised egress.** Spokes reach the IPv4 internet through one NAT in
+  the hub, either a NAT Gateway or a NAT instance, compared on cost. IPv6
+  leaves each VPC through its own egress-only internet gateway, because IPv6
+  egress cannot be centralised without self-managed NAT66
+  ([ADR 5](docs/adr/0005-centralised-ipv4-egress-per-vpc-ipv6-egress.md)).
 - **Site-to-site VPN with BGP.** Both tunnels terminate on strongSwan and FRR,
   running on a t4g.micro in a VPC that plays the on-premises network. One tunnel
   is cut and the BGP failover time is measured.
@@ -52,7 +54,7 @@ Each milestone is one session. Costs are estimates from the AWS Price List
 |---|---|---|---|---|
 | M0 | Repository bootstrap: layout, connectivity matrix format, lint and tests in CI, ADRs | 0 h | $0 | done |
 | M1 | Account root: state, GitHub plan role, boundary, TTL reaper, budget | ~0.5 h | ~$0.01 | done |
-| M2 | VPCs, Transit Gateway segmentation, centralised egress, matrix runner | ~2.5 h | ~$0.65 | planned |
+| M2 | VPCs, Transit Gateway segmentation, centralised egress, matrix runner | ~2.5 h | ~$0.65 | built, deploy next |
 | M3 | Site-to-site VPN with BGP, tunnel failover measurement | ~3 h | ~$1.10 | planned |
 | M4 | PrivateLink across overlapping CIDRs, flow logs with Athena, Reachability Analyzer | ~3 h | ~$2.10 | planned |
 | M5 | End-to-end session, safety net test, cost from the bill, write-up | ~2.5 h | ~$1.65 | planned |
@@ -115,12 +117,13 @@ $ bash scripts/lab.sh status
 ## Repository layout
 
 ```
-infra/lab/        Terraform root for the session-only lab
+infra/lab/        Terraform root for the session-only lab (modules/vpc: one dual-stack VPC)
 infra/account/    always-on account resources: plan role, boundary, reaper, budget
 src/reaper/       the TTL reaper Lambda function
 tests/matrix.yaml connectivity matrix, the test contract
-tests/unit/       unit tests (the reaper runs against moto)
-scripts/          lab.sh, account and state setup, matrix tool, lint
+tests/unit/       unit tests (the reaper against moto, the matrix runner against a fake SSM)
+scripts/          lab.sh, account and state setup, matrix tool and probe, lint
+docs/results/     connectivity matrix reports from real lab sessions
 docs/adr/         architecture decision records
 docs/architecture.svg  the diagram above, updated after every milestone
 ```
@@ -145,11 +148,22 @@ to apply). For plan on pull requests, add the repository secrets
 ## Running a lab session
 
 ```bash
-bash scripts/lab.sh deploy 4     # expires in 4 hours (1-10)
+bash scripts/lab.sh deploy 4     # expires in 4 hours (1-10), then runs the matrix
+bash scripts/lab.sh matrix       # run the matrix again; the report goes to docs/results/
 bash scripts/lab.sh status       # billable resources and their expiry
 bash scripts/lab.sh extend 2     # expiry moves to 2 hours from now
 bash scripts/lab.sh destroy      # destroy, then check nothing billable is left
 ```
+
+Egress uses the NAT Gateway by default. `TF_VAR_egress=nat-instance bash
+scripts/lab.sh deploy` switches the lab to a NAT instance; `extend` keeps
+whichever is deployed.
+
+The matrix runner sends each test host one SSM Run Command invocation. The
+host runs [`scripts/matrix_probe.py`](scripts/matrix_probe.py), which tries
+every TCP connection in its rows with a 5-second timeout and prints the
+results as JSON. A completed handshake counts as allow; a timeout, refusal or
+unreachable network counts as deny, and the reason is kept in the report.
 
 ## Running the checks locally
 
@@ -173,6 +187,7 @@ Checkov and pytest pin conflicting versions of `packaging`.
 - [ADR 2: Session-only lab with a layered safety net](docs/adr/0002-session-only-lab-and-safety-net.md)
 - [ADR 3: A connectivity matrix as the test contract](docs/adr/0003-connectivity-matrix-as-test-contract.md)
 - [ADR 4: Terraform state and GitHub access to AWS](docs/adr/0004-state-and-github-access.md)
+- [ADR 5: Centralised IPv4 egress, per-VPC IPv6 egress](docs/adr/0005-centralised-ipv4-egress-per-vpc-ipv6-egress.md)
 
 ## Licence
 

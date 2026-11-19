@@ -14,6 +14,9 @@ case "$action" in
   *) echo "Usage: $0 plan|apply" >&2; exit 2 ;;
 esac
 : "${ALERT_EMAIL:?Set ALERT_EMAIL to the address for reaper reports and budget alerts}"
+# A value read with the Windows AWS CLI ends in a carriage return, which would
+# replace the subscription and need a new confirmation.
+ALERT_EMAIL=$(printf %s "$ALERT_EMAIL" | tr -d '\r')
 
 tf_init account
 # apply shows the plan and waits for "yes"; plan never prompts.

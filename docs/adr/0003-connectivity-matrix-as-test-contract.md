@@ -1,6 +1,6 @@
 # 3. A connectivity matrix as the test contract
 
-- Status: accepted (the runner that probes the instances is built in M2)
+- Status: accepted
 - Date: 2026-11-18
 
 ## Context

@@ -20,3 +20,14 @@ variable "expires_at" {
     error_message = "expires_at must be in the future and at most 10 hours away."
   }
 }
+
+variable "egress" {
+  description = "Centralised IPv4 egress in the hub: the managed NAT gateway or a NAT instance (t4g.micro). Switch with TF_VAR_egress=nat-instance bash scripts/lab.sh deploy."
+  type        = string
+  default     = "nat-gateway"
+
+  validation {
+    condition     = contains(["nat-gateway", "nat-instance"], var.egress)
+    error_message = "egress must be nat-gateway or nat-instance."
+  }
+}
