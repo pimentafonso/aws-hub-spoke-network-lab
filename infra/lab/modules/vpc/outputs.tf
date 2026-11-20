@@ -31,3 +31,12 @@ output "internet_gateway_id" {
   description = "Internet gateway ID, or null without public subnets."
   value       = one(aws_internet_gateway.this[*].id)
 }
+
+output "subnet_ipv4_cidrs" {
+  description = "Subnet IPv4 CIDRs by tier, in the order of var.azs."
+  value = {
+    for tier in local.tiers : tier => [
+      for az in var.azs : aws_subnet.this["${tier}-${az}"].cidr_block
+    ]
+  }
+}

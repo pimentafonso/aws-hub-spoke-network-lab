@@ -63,7 +63,7 @@ checks:
     family: ipv4
     expect: allow
     stage: m2
-    reason: rt-spokes has the hub attachment's routes propagated.
+    reason: rt-spoke-a has the hub attachment's routes propagated.
   - id: spoke-b-to-hub-web
     from: spoke-b
     to: hub-svc
@@ -71,7 +71,7 @@ checks:
     family: ipv4
     expect: allow
     stage: m2
-    reason: rt-spokes has the hub attachment's routes propagated.
+    reason: rt-spoke-b has the hub attachment's routes propagated.
   - id: spoke-a-to-hub-web-v6
     from: spoke-a
     to: hub-svc
@@ -79,7 +79,7 @@ checks:
     family: ipv6
     expect: allow
     stage: m2
-    reason: The attachments are dual-stack; spoke A routes the hub's /56 to the TGW, and rt-spokes has it propagated.
+    reason: The attachments are dual-stack; spoke A routes the hub's /56 to the TGW, and rt-spoke-a has it propagated.
   - id: spoke-a-to-spoke-b
     from: spoke-a
     to: spoke-b
@@ -88,7 +88,7 @@ checks:
     expect: deny
     layer: routing
     stage: m2
-    reason: rt-spokes blackholes the spoke ranges, so spokes cannot reach each other.
+    reason: rt-spoke-a blackholes 10.0.0.0/8; only the hub's more specific /16 is propagated.
   - id: spoke-b-to-spoke-a
     from: spoke-b
     to: spoke-a
@@ -97,7 +97,7 @@ checks:
     expect: deny
     layer: routing
     stage: m2
-    reason: rt-spokes blackholes the spoke ranges, so spokes cannot reach each other.
+    reason: rt-spoke-b blackholes 10.0.0.0/8; only the hub's more specific /16 is propagated.
   - id: spoke-a-to-spoke-b-v6
     from: spoke-a
     to: spoke-b
@@ -157,7 +157,7 @@ checks:
     family: ipv4
     expect: allow
     stage: m3
-    reason: rt-vpn has the hub's routes propagated, advertised to on-prem over BGP.
+    reason: rt-vpn has the hub's routes propagated, and the TGW advertises them to on-prem over BGP.
   - id: onprem-to-spoke-a-web
     from: onprem
     to: spoke-a
@@ -165,7 +165,7 @@ checks:
     family: ipv4
     expect: allow
     stage: m3
-    reason: rt-vpn has spoke A's routes propagated.
+    reason: rt-vpn has spoke A's routes propagated; rt-spoke-a learns on-prem's range back over BGP.
   - id: onprem-to-spoke-b-web
     from: onprem
     to: spoke-b
@@ -174,7 +174,7 @@ checks:
     expect: deny
     layer: routing
     stage: m3
-    reason: rt-vpn does not propagate spoke B, so on-prem never learns its range.
+    reason: rt-vpn does not propagate spoke B, so on-prem never learns its range and sends it to the internet instead.
   - id: spoke-a-to-onprem-web
     from: spoke-a
     to: onprem
@@ -182,7 +182,7 @@ checks:
     family: ipv4
     expect: allow
     stage: m3
-    reason: rt-spokes has the VPN attachment's BGP routes propagated.
+    reason: rt-spoke-a has the VPN's BGP routes propagated; on-prem's /16 beats the 172.16.0.0/12 blackhole.
   - id: spoke-b-to-onprem-web
     from: spoke-b
     to: onprem
@@ -191,7 +191,7 @@ checks:
     expect: deny
     layer: routing
     stage: m3
-    reason: The return path does not exist, because on-prem has no route to spoke B.
+    reason: rt-spoke-b has no VPN routes, so on-prem's range hits the 172.16.0.0/12 blackhole at the TGW.
 
   # --- M4: PrivateLink across an overlapping CIDR ---------------------------
   - id: consumer-to-privatelink

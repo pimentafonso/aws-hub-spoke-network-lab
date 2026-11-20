@@ -1,9 +1,11 @@
 # The session-only lab. M2: a hub and two spokes on a Transit Gateway, with
 # centralised IPv4 egress through the hub and a test host in each VPC.
+# M3: a simulated on-premises network joined over a site-to-site VPN with BGP.
 #
-#   hub      10.0.0.0/16  shared services, NAT, internet gateway
-#   spoke-a  10.1.0.0/16  workload
-#   spoke-b  10.2.0.0/16  workload, isolated from spoke-a
+#   hub      10.0.0.0/16    shared services, NAT, internet gateway
+#   spoke-a  10.1.0.0/16    workload, reachable from on-prem
+#   spoke-b  10.2.0.0/16    workload, isolated from spoke-a and from on-prem
+#   onprem   172.16.0.0/16  not attached to the TGW: its only way in is the VPN
 #
 # Every VPC is dual-stack with an Amazon-provided IPv6 /56. The design and the
 # expected results are in tests/matrix.yaml; scripts/lab.sh runs it after
@@ -16,8 +18,16 @@ locals {
   account_id = data.aws_caller_identity.current.account_id
   partition  = data.aws_partition.current.partition
 
+  # On every resource through the provider, and on the few the provider cannot
+  # tag (the VPN's Transit Gateway attachment, vpn.tf).
+  default_tags = {
+    Project   = "aws-hub-spoke-network-lab"
+    ManagedBy = "terraform"
+    ExpiresAt = var.expires_at
+  }
+
   # The milestone this code deploys; the matrix runner runs its rows.
-  stage = "m2"
+  stage = "m3"
 
   # Two zones for the subnets and the TGW attachments, which cost the same
   # either way. Hosts, the NAT gateway and the NAT instance sit in the first
@@ -27,11 +37,13 @@ locals {
   azs = ["${var.region}a", "${var.region}b"]
 
   vpcs = {
-    hub       = { cidr = "10.0.0.0/16", public = true }
-    "spoke-a" = { cidr = "10.1.0.0/16", public = false }
-    "spoke-b" = { cidr = "10.2.0.0/16", public = false }
+    hub       = { cidr = "10.0.0.0/16", public = true, tgw = true }
+    "spoke-a" = { cidr = "10.1.0.0/16", public = false, tgw = true }
+    "spoke-b" = { cidr = "10.2.0.0/16", public = false, tgw = true }
+    onprem    = { cidr = "172.16.0.0/16", public = true, tgw = false }
   }
-  spokes = ["spoke-a", "spoke-b"]
+  tgw_vpcs = { for name, v in local.vpcs : name => v if v.tgw }
+  spokes   = ["spoke-a", "spoke-b"]
 
   # Everything the lab uses or may use for private addressing. rt-spokes
   # blackholes these, so the default route to the hub never carries

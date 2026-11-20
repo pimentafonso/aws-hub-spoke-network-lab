@@ -178,6 +178,7 @@ to apply). For plan on pull requests, add the repository secrets
 ```bash
 bash scripts/lab.sh deploy 4     # expires in 4 hours (1-10), then runs the matrix
 bash scripts/lab.sh matrix       # run the matrix again; the report goes to docs/results/
+bash scripts/lab.sh failover     # cut VPN tunnel 1 three times and measure the BGP failover
 bash scripts/lab.sh status       # billable resources and their expiry
 bash scripts/lab.sh extend 2     # expiry moves to 2 hours from now
 bash scripts/lab.sh destroy      # destroy, then check nothing billable is left
@@ -216,6 +217,7 @@ Checkov and pytest pin conflicting versions of `packaging`.
 - [ADR 3: A connectivity matrix as the test contract](docs/adr/0003-connectivity-matrix-as-test-contract.md)
 - [ADR 4: Terraform state and GitHub access to AWS](docs/adr/0004-state-and-github-access.md)
 - [ADR 5: Centralised IPv4 egress, per-VPC IPv6 egress](docs/adr/0005-centralised-ipv4-egress-per-vpc-ipv6-egress.md)
+- [ADR 6: Site-to-site VPN with BGP, active/standby, and a route table per spoke](docs/adr/0006-site-to-site-vpn-with-bgp.md)
 
 ## Licence
 

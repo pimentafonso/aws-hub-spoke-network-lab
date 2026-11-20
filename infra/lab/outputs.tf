@@ -37,3 +37,22 @@ output "transit_gateway_id" {
   description = "Transit Gateway ID."
   value       = aws_ec2_transit_gateway.main.id
 }
+
+# Read by scripts/failover.py. The tunnels' outside addresses are AWS's
+# endpoints; the failover cuts tunnel 1 by dropping its endpoint's traffic.
+output "vpn" {
+  description = "The VPN connection, the on-prem router and each tunnel's addresses."
+  value = {
+    connection_id      = aws_vpn_connection.onprem.id
+    attachment_id      = aws_vpn_connection.onprem.transit_gateway_attachment_id
+    router_instance_id = aws_instance.router.id
+    tunnels = [
+      for i, t in local.tunnels : {
+        name    = "tunnel${i + 1}"
+        outside = t.outside
+        cgw     = t.cgw
+        aws     = t.aws
+      }
+    ]
+  }
+}

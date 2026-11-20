@@ -1,5 +1,7 @@
 # -----------------------------------------------------------------------------
 # Test hosts: one t4g.micro per VPC, no public IPv4, reached only through SSM.
+# Security groups open web to every lab range, on-prem included, so the
+# matrix's on-prem denies can only come from routing.
 # Each listens on TCP 80 (web, open to the lab) and 8443 (admin, hub only),
 # the two ports tests/matrix.yaml probes.
 # -----------------------------------------------------------------------------
@@ -13,6 +15,7 @@ locals {
     "hub-svc" = "hub"
     "spoke-a" = "spoke-a"
     "spoke-b" = "spoke-b"
+    "onprem"  = "onprem" # reaches SSM through the on-prem router (vpn.tf)
   }
 
   # Probe ports: what the matrix tests, and what the hosts' egress allows.

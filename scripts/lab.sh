@@ -5,6 +5,7 @@
 #                                        then run the connectivity matrix
 #   bash scripts/lab.sh extend <hours>   move the expiry to <hours> from now (tags only)
 #   bash scripts/lab.sh matrix           run the connectivity matrix and save the report
+#   bash scripts/lab.sh failover [runs]  cut VPN tunnel 1 and measure the BGP failover (default 3 runs)
 #   bash scripts/lab.sh destroy          terraform destroy, then fail if anything
 #                                        billable with the lab's tag is still there
 #   bash scripts/lab.sh status           list billable lab resources and their expiry
@@ -20,7 +21,7 @@ cd "$(dirname "$0")/.."
 source scripts/lib.sh
 
 usage() {
-  sed -n '4,11p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '4,12p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -40,12 +41,18 @@ apply() {
   terraform -chdir=infra/lab apply -input=true -var="expires_at=$expires"
 }
 
-# terraform output -json for the matrix runner, outside the repository's tree.
+# terraform output -json for the test scripts, outside the repository's tree.
+OUTPUTS=infra/lab/.build/outputs.json
+write_outputs() {
+  mkdir -p "$(dirname "$OUTPUTS")"
+  terraform -chdir=infra/lab output -json >"$OUTPUTS"
+}
+
+# From M3 the on-prem rows need both tunnels and BGP up; wait for them first.
 matrix() {
-  local outputs=infra/lab/.build/outputs.json
-  mkdir -p "$(dirname "$outputs")"
-  terraform -chdir=infra/lab output -json >"$outputs"
-  run_python scripts/matrix.py run --outputs "$outputs" --save docs/results
+  write_outputs
+  run_python scripts/failover.py wait --outputs "$OUTPUTS"
+  run_python scripts/matrix.py run --outputs "$OUTPUTS" --save docs/results
 }
 
 case "${1:-}" in
@@ -65,6 +72,11 @@ case "${1:-}" in
   matrix)
     tf_init lab
     matrix
+    ;;
+  failover)
+    tf_init lab
+    write_outputs
+    run_python scripts/failover.py run --outputs "$OUTPUTS" --runs "${2:-3}" --save docs/results
     ;;
   destroy)
     tf_init lab
