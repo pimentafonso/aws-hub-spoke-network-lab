@@ -6,8 +6,9 @@ CIDRs, and an automated connectivity test. Each session deploys it, measures
 it and destroys it.
 
 > **Status:** work in progress. M2 (VPCs, Transit Gateway, egress, matrix
-> runner) is built and planned, and has not been deployed yet. The safety net
-> is live. Every number here is measured, with how and when.
+> runner) has been deployed, tested with both NAT options and destroyed; the
+> M3 VPN is next. The safety net is live. Every number here is measured, with
+> how and when.
 
 ## What it will show
 
@@ -31,10 +32,10 @@ it and destroys it.
 
 ![Target architecture: a hub VPC with NAT and egress-only internet gateway attached to a Transit Gateway with three route tables; spokes A and B reach the hub but not each other; a simulated on-premises VPC connects over a two-tunnel VPN with BGP and reaches spoke A only; a consumer VPC with spoke A's CIDR reaches spoke A's NLB through PrivateLink; the always-on account root holds the plan role, state, TTL reaper and budget](docs/architecture.svg)
 
-Solid boxes are deployed, dashed amber boxes come in the next milestone and
-dashed grey boxes later. Red dashed lines are connections the matrix expects
-to fail. Today only the always-on account root exists; the lab itself is
-deployed for one session at a time.
+Solid boxes are built and have been tested in a real session, dashed amber
+boxes come in the next milestone and dashed grey boxes later. Red dashed lines
+are connections the matrix expects to fail. Between sessions only the
+always-on account root exists; the lab is deployed for one session at a time.
 
 | Area | Services |
 |---|---|
@@ -54,7 +55,7 @@ Each milestone is one session. Costs are estimates from the AWS Price List
 |---|---|---|---|---|
 | M0 | Repository bootstrap: layout, connectivity matrix format, lint and tests in CI, ADRs | 0 h | $0 | done |
 | M1 | Account root: state, GitHub plan role, boundary, TTL reaper, budget | ~0.5 h | ~$0.01 | done |
-| M2 | VPCs, Transit Gateway segmentation, centralised egress, matrix runner | ~2.5 h | ~$0.65 | built, deploy next |
+| M2 | VPCs, Transit Gateway segmentation, centralised egress, matrix runner | 0.3 h | ~$0.65 | done, billed cost pending |
 | M3 | Site-to-site VPN with BGP, tunnel failover measurement | ~3 h | ~$1.10 | planned |
 | M4 | PrivateLink across overlapping CIDRs, flow logs with Athena, Reachability Analyzer | ~3 h | ~$2.10 | planned |
 | M5 | End-to-end session, safety net test, cost from the bill, write-up | ~2.5 h | ~$1.65 | planned |
@@ -81,6 +82,33 @@ deny names the layer that should stop it, a security group or routing (see
 
 CI validates the file. From M2, every deploy runs it against the live lab and
 fails on any difference.
+
+**Measured, 20 November 2026 (M2).** The 11 M2 rows passed on the first run
+with each NAT option, from the reports in [`docs/results/`](docs/results/):
+
+| Egress | Report | Result |
+|---|---|---|
+| NAT Gateway | [m2-nat-gateway-2026-11-20T0928Z](docs/results/m2-nat-gateway-2026-11-20T0928Z.md) | 11 of 11 |
+| NAT instance (t4g.micro) | [m2-nat-instance-2026-11-20T0938Z](docs/results/m2-nat-instance-2026-11-20T0938Z.md) | 11 of 11 |
+
+Spoke to spoke timed out on IPv4 and IPv6, the hub's admin port timed out from
+a spoke, and every allowed connection completed in 1 to 2 ms. From the same
+session:
+
+- `terraform apply` of the 153 resources took 3 min 36 s, and `destroy` 4 min
+  28 s, after which nothing billable was left: no VPC, Transit Gateway,
+  attachment, NAT, Elastic IP, instance, volume or network interface.
+- Switching a running lab from the NAT Gateway to the NAT instance failed once:
+  releasing the Elastic IP raced the deletion of the NAT Gateway's network
+  interface (`InvalidNetworkInterfaceID.NotFound`). A second apply finished it.
+- The test hosts reach SSM through the centralised egress, as there are no VPC
+  endpoints. Deleting the NAT Gateway broke their open SSM connections, and the
+  first matrix run after the switch timed out after 5 minutes waiting for the
+  hub host, which still showed as online. Its result arrived later, and a run
+  a few minutes after that passed. Changing the egress cuts the lab's
+  management plane too.
+- The billed cost of the session replaces the estimate once Cost Explorer has
+  it.
 
 ## Cost control
 
