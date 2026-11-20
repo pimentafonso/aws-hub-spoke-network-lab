@@ -1,6 +1,6 @@
 # 5. Centralised IPv4 egress, per-VPC IPv6 egress
 
-- Status: accepted
+- Status: accepted (from M3, `rt-spokes` is one table per spoke; see ADR 6)
 - Date: 2026-11-18
 
 ## Context

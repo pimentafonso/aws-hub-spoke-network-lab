@@ -127,6 +127,25 @@ data "aws_iam_policy_document" "workload_boundary" {
     resources = ["*"]
   }
 
+  # M3: the on-prem router reads the VPN's pre-shared keys at boot, from
+  # SecureString parameters under /nwlab/vpn/, encrypted with the AWS managed key.
+  statement {
+    sid       = "ReadVpnKeys"
+    actions   = ["ssm:GetParameter"]
+    resources = ["arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter/${var.prefix}/vpn/*"]
+  }
+
+  statement {
+    sid       = "DecryptThroughSsm"
+    actions   = ["kms:Decrypt"]
+    resources = ["arn:${local.partition}:kms:${local.region}:${local.account_id}:key/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["ssm.${local.region}.amazonaws.com"]
+    }
+  }
+
   statement {
     sid       = "InvokeOwnFunctions"
     actions   = ["lambda:InvokeFunction"]
