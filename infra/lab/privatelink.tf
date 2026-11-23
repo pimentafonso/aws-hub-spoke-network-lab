@@ -107,7 +107,7 @@ resource "aws_vpc_security_group_ingress_rule" "consumer_endpoints" {
   for_each = { web = local.web_port, https = 443 }
 
   security_group_id = aws_security_group.consumer_endpoints.id
-  description       = each.key == "web" ? "Spoke A's service" : "SSM"
+  description       = each.key == "web" ? "Spoke A web service" : "SSM"
   ip_protocol       = "tcp"
   from_port         = each.value
   to_port           = each.value

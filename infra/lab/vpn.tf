@@ -97,7 +97,7 @@ resource "aws_network_interface" "router" {
   subnet_id          = module.vpc["onprem"].subnet_ids["public"][0]
   security_groups    = [aws_security_group.router.id]
   source_dest_check  = false # it forwards packets that are not its own
-  ipv6_address_count = 0
+  ipv6_address_count = 1     # the subnet assigns one anyway; 0 would drift
   tags               = { Name = "nwlab-onprem-router" }
 }
 
@@ -256,9 +256,10 @@ resource "aws_instance" "router" {
   }
 
   # A newer Ubuntu image must not replace the router in the middle of a
-  # session (an extend re-applies the lab).
+  # session (an extend re-applies the lab). source_dest_check belongs to the
+  # interface; the instance reads it back as false and must not reset it.
   lifecycle {
-    ignore_changes = [ami]
+    ignore_changes = [ami, source_dest_check]
   }
 
   # The keys must be readable when the router boots.

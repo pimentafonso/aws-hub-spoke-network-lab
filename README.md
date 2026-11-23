@@ -5,10 +5,10 @@ centralised egress, site-to-site VPN with BGP, PrivateLink across overlapping
 CIDRs, and an automated connectivity test. Each session deploys it, measures
 it and destroys it.
 
-> **Status:** work in progress. M3 (site-to-site VPN with BGP to a simulated
-> on-premises network) has been deployed, tested, failed over three times and
-> destroyed; M4 PrivateLink and flow logs are next. The safety net is live.
-> Every number here is measured, with how and when.
+> **Status:** work in progress. M4 (PrivateLink across an overlapping range,
+> flow logs with Athena, Reachability Analyzer) has been deployed, tested and
+> destroyed; M5, a full session with the bill and the write-up, is next. The
+> safety net is live. Every number here is measured, with how and when.
 
 ## What it will show
 
@@ -32,8 +32,7 @@ it and destroys it.
 
 ![Target architecture: a hub VPC with NAT and egress-only internet gateway attached to a Transit Gateway with four route tables; spokes A and B reach the hub but not each other; a simulated on-premises VPC connects over a two-tunnel VPN with BGP and reaches spoke A only; a consumer VPC with spoke A's CIDR reaches spoke A's NLB through PrivateLink; the always-on account root holds the plan role, state, TTL reaper and budget](docs/architecture.svg)
 
-Solid boxes are built and have been tested in a real session, dashed amber
-boxes come in the next milestone and dashed grey boxes later. Red dashed lines
+Every box is built and has been tested in a real session. Red dashed lines
 are connections the matrix expects to fail. Between sessions only the
 always-on account root exists; the lab is deployed for one session at a time.
 
@@ -57,7 +56,7 @@ Each milestone is one session. Costs are estimates from the AWS Price List
 | M1 | Account root: state, GitHub plan role, boundary, TTL reaper, budget | ~0.5 h | ~$0.01 | done |
 | M2 | VPCs, Transit Gateway segmentation, centralised egress, matrix runner | 0.3 h | ~$0.65 | done; billed with M3, see below |
 | M3 | Site-to-site VPN with BGP, tunnel failover measurement | 0.5 h | ~$0.18 | done; $0.28 billed for M2 and M3 together |
-| M4 | PrivateLink across overlapping CIDRs, flow logs with Athena, Reachability Analyzer | ~3 h | ~$2.10 | planned |
+| M4 | PrivateLink across overlapping CIDRs, flow logs with Athena, Reachability Analyzer | 0.5 h | ~$0.50 | done; bill not in yet |
 | M5 | End-to-end session, safety net test, cost from the bill, write-up | ~2.5 h | ~$1.65 | planned |
 | M6 | Optional: hybrid DNS with Route 53 Resolver endpoints | ~1.5 h | ~$1.30 | planned |
 
@@ -142,6 +141,77 @@ shows the same 1 hour, so it is not a tagging gap. And about 0.6 h of public
 IPv4 address time was billed without the lab's tag (about $0.003). Both are
 checked again when the month's bill is final.
 
+**Measured, 23 November 2026 (M4).** All 19 rows passed on the first run:
+[m4-nat-gateway-2026-11-23T2134Z](docs/results/m4-nat-gateway-2026-11-23T2134Z.md).
+The three new rows are the consumer VPC, which uses spoke A's range:
+
+- Through the PrivateLink endpoint (10.1.1.132, an address in the consumer's
+  own range) it reached spoke A's web port in 2 ms.
+- Its probe straight to spoke A's host, 10.1.0.10, failed at once with "No
+  route to host": inside the consumer that address is local, and nothing in
+  the consumer VPC has it.
+- Its probe to the internet timed out; it has no route out.
+
+## Evidence: flow logs and Reachability Analyzer
+
+A timeout looks the same whatever stopped it, so M4 checks that the layer each
+deny names is the one that acted
+([ADR 7](docs/adr/0007-privatelink-and-flow-log-evidence.md)).
+
+**Flow logs, 23 November 2026.** `bash scripts/lab.sh evidence` ran the matrix,
+then polled Athena every 60 s until every row had its evidence:
+[m4-flowlogs-2026-11-23T2141Z](docs/results/m4-flowlogs-2026-11-23T2141Z.md).
+
+| Row | Rows | Flow logs showed |
+|---|---|---|
+| allow | 8 | 1 ACCEPT at the destination's interface each, and no REJECT |
+| deny, security group | 1 | spoke A to the hub's admin port: 1 REJECT at the hub host, no ACCEPT |
+| deny, routing | 6 | no record in the destination VPC, whose logs had arrived past the window |
+| to the internet | 4 | not checked: the destination is outside the lab |
+
+15 of 15 rows were confirmed. The PrivateLink row was checked at the
+endpoint's interface in the consumer VPC. The last row's evidence was in
+Athena 6.7 minutes after the probes ended (to within the 60 s poll), so
+delivery, not the query, sets the pace.
+
+**Reachability Analyzer, 23 November 2026.** Three analyses, $0.10 each:
+[m4-reachability-2026-11-23T2142Z](docs/results/m4-reachability-2026-11-23T2142Z.md).
+
+| Path | Matrix says | Analyzer said |
+|---|---|---|
+| hub to spoke A's admin port | allow | path found |
+| spoke A to the hub's admin port | deny, security group | `ENI_SG_RULES_MISMATCH`, one security group |
+| spoke A to spoke B | deny, routing | `TGW_RTB_NO_ROUTE_TO_TGW_ATTACHMENT`, `rt-spoke-a` |
+
+For spoke A to spoke B the analyzer reports no route to an attachment,
+although `rt-spoke-a` does match 10.2.0.0/16: its 10.0.0.0/8 route is a
+blackhole. I listed the table's routes during the session to confirm it; the
+analyzer reports a blackhole match with the same code as a missing route.
+
+**Session, 23 November 2026.**
+
+- `terraform apply` created 305 of the 306 resources in 6 min 26 s and failed
+  on the last: EC2 rejects an apostrophe in a security group rule's
+  description. The re-plan also showed that any second apply, such as
+  `lab.sh extend`, would have turned source/destination checking back on for
+  the on-prem router, stopping it forwarding, and removed its IPv6 address,
+  which its subnet assigns anyway. That bug dates from M3. Both are fixed; the
+  re-plan then added only the missing rule.
+- The first `destroy` stopped after 6 minutes on the three Reachability
+  Analyzer paths: AWS will not delete a path that still has analyses. The
+  NAT, VPN, Transit Gateway, NLB, endpoints and flow log bucket were already
+  gone; the five test hosts were left. I deleted the analyses and a second
+  destroy removed the last 99 resources in 1 min 5 s. `evidence.py` now
+  deletes its analyses once the report is written.
+- A direct check then found no VPC, Transit Gateway, attachment, VPN
+  connection, customer gateway, NAT, Elastic IP, instance, volume, network
+  interface, VPC endpoint, endpoint service, load balancer, flow log,
+  Reachability Analyzer path or analysis, flow log bucket, Glue database,
+  Athena workgroup or VPN key parameter.
+- The lab was up from 21:22 to 21:50 UTC. The estimate is about $0.50,
+  $0.30 of it the analyses; the billed figure follows when Cost Explorer has
+  it.
+
 ## VPN failover
 
 `bash scripts/lab.sh failover` cuts tunnel 1 on the on-prem router by dropping
@@ -182,7 +252,7 @@ re-initiates the tunnel. BGP uses AWS's timers: keepalive 10 s, hold 30 s.
 
 ## Cost control
 
-The lab costs about $0.42 an hour while deployed, so it never stays up. Four
+The full lab costs about $0.44 an hour while deployed (estimate, since M4), so it never stays up. Four
 independent layers make sure of it
 ([ADR 2](docs/adr/0002-session-only-lab-and-safety-net.md)):
 
