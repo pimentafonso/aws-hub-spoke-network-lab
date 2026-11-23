@@ -5,10 +5,10 @@ centralised egress, site-to-site VPN with BGP, PrivateLink across overlapping
 CIDRs, and an automated connectivity test. Each session deploys it, measures
 it and destroys it.
 
-> **Status:** work in progress. M2 (VPCs, Transit Gateway, egress, matrix
-> runner) has been deployed, tested with both NAT options and destroyed; the
-> M3 VPN is next. The safety net is live. Every number here is measured, with
-> how and when.
+> **Status:** work in progress. M3 (site-to-site VPN with BGP to a simulated
+> on-premises network) has been deployed, tested, failed over three times and
+> destroyed; M4 PrivateLink and flow logs are next. The safety net is live.
+> Every number here is measured, with how and when.
 
 ## What it will show
 
@@ -30,7 +30,7 @@ it and destroys it.
 
 ## Architecture
 
-![Target architecture: a hub VPC with NAT and egress-only internet gateway attached to a Transit Gateway with three route tables; spokes A and B reach the hub but not each other; a simulated on-premises VPC connects over a two-tunnel VPN with BGP and reaches spoke A only; a consumer VPC with spoke A's CIDR reaches spoke A's NLB through PrivateLink; the always-on account root holds the plan role, state, TTL reaper and budget](docs/architecture.svg)
+![Target architecture: a hub VPC with NAT and egress-only internet gateway attached to a Transit Gateway with four route tables; spokes A and B reach the hub but not each other; a simulated on-premises VPC connects over a two-tunnel VPN with BGP and reaches spoke A only; a consumer VPC with spoke A's CIDR reaches spoke A's NLB through PrivateLink; the always-on account root holds the plan role, state, TTL reaper and budget](docs/architecture.svg)
 
 Solid boxes are built and have been tested in a real session, dashed amber
 boxes come in the next milestone and dashed grey boxes later. Red dashed lines
@@ -56,7 +56,7 @@ Each milestone is one session. Costs are estimates from the AWS Price List
 | M0 | Repository bootstrap: layout, connectivity matrix format, lint and tests in CI, ADRs | 0 h | $0 | done |
 | M1 | Account root: state, GitHub plan role, boundary, TTL reaper, budget | ~0.5 h | ~$0.01 | done |
 | M2 | VPCs, Transit Gateway segmentation, centralised egress, matrix runner | 0.3 h | ~$0.65 | done, billed cost pending |
-| M3 | Site-to-site VPN with BGP, tunnel failover measurement | ~3 h | ~$1.10 | planned |
+| M3 | Site-to-site VPN with BGP, tunnel failover measurement | 0.5 h | ~$0.18 | done, billed cost pending |
 | M4 | PrivateLink across overlapping CIDRs, flow logs with Athena, Reachability Analyzer | ~3 h | ~$2.10 | planned |
 | M5 | End-to-end session, safety net test, cost from the bill, write-up | ~2.5 h | ~$1.65 | planned |
 | M6 | Optional: hybrid DNS with Route 53 Resolver endpoints | ~1.5 h | ~$1.30 | planned |
@@ -77,7 +77,7 @@ deny names the layer that should stop it, a security group or routing (see
   expect: deny
   layer: routing
   stage: m2
-  reason: rt-spokes blackholes the spoke ranges, so spokes cannot reach each other.
+  reason: rt-spoke-a blackholes 10.0.0.0/8; only the hub's more specific /16 is propagated.
 ```
 
 CI validates the file. From M2, every deploy runs it against the live lab and
@@ -109,6 +109,57 @@ session:
   management plane too.
 - The billed cost of the session replaces the estimate once Cost Explorer has
   it.
+
+**Measured, 20 November 2026 (M3).** With the VPN up, the 16 M3 rows passed
+on the first run:
+[m3-nat-gateway-2026-11-20T1452Z](docs/results/m3-nat-gateway-2026-11-20T1452Z.md).
+On-prem reached the hub in 6 ms and spoke A in 3 ms, and spoke A reached
+on-prem in 10 ms, all through the tunnel. Spoke B to on-prem and on-prem to
+spoke B both timed out: spoke B's route table blackholes 172.16.0.0/12 and
+`rt-vpn` has no route to spoke B
+([ADR 6](docs/adr/0006-site-to-site-vpn-with-bgp.md)). The 11 M2 rows still
+passed. Destroying the 261 resources and checking for leftovers took 5 min
+30 s, and a direct check found no VPC, Transit Gateway, attachment, VPN
+connection, customer gateway, NAT, Elastic IP, instance, volume, network
+interface or VPN key parameter left.
+
+## VPN failover
+
+`bash scripts/lab.sh failover` cuts tunnel 1 on the on-prem router by dropping
+all traffic to and from its AWS endpoint, so neither side says goodbye, as with
+a failed link. Meanwhile the on-prem host opens a TCP connection to spoke A
+every 0.2 s with a 0.5 s timeout. After 90 s the cut is lifted and strongSwan
+re-initiates the tunnel. BGP uses AWS's timers: keepalive 10 s, hold 30 s.
+
+**Measured, 20 November 2026,** three runs
+([m3-failover-2026-11-20T1504Z](docs/results/m3-failover-2026-11-20T1504Z.md)):
+
+| Run | BGP down after | Outage | Probes lost | Path while cut | BGP up after restore |
+|---|---|---|---|---|---|
+| 1 | 21.5 s | 39.8 s | 79 | tunnel 2 | 2.2 s |
+| 2 | 23.5 s | 41.3 s | 82 | tunnel 2 | 50.0 s |
+| 3 | 26.5 s | 43.3 s | 86 | tunnel 2 | 1.1 s |
+
+- **Median outage 41.3 s** (39.8 to 43.3 s). The on-prem router dropped the
+  tunnel 1 session 21.5 to 26.5 s after the cut, which is the 30 s hold timer
+  less the time since the last keepalive. AWS does not support BFD on VPN
+  tunnels, so the hold timer is the floor.
+- The outage lasted 17 to 18 s longer than that. A TCP handshake needs both
+  directions, and the return path only moves when the Transit Gateway drops
+  tunnel 1's routes. My reading is that this is AWS's own hold timer plus
+  route propagation; the test does not time the AWS side directly.
+- While cut, tunnel 1's interface received nothing and tunnel 2's about 800
+  packets in each run, so every flow moved, as active/standby intends.
+- Failback lost no probes: tunnel 2 kept working until tunnel 1 took over.
+  BGP came back 1.1 and 2.2 s after the restore in runs 1 and 3. In run 2 it
+  took 50 s, and tunnel 1 then received only 11 packets in the remaining
+  40 s, so AWS kept return traffic on tunnel 2. The test records only BGP
+  neighbour changes, so the cause is not known; M5 repeats the test with the
+  strongSwan log captured.
+- AWS's tunnel status (`VgwTelemetry`, polled every 5 s) showed tunnel 1 down
+  63 to 89 s after the cut and, in runs 1 and 3, up again about 74 and 83 s
+  after the restore. It lags the data path by a minute or more, so it is no
+  use for timing a failover.
 
 ## Cost control
 
@@ -150,8 +201,8 @@ infra/account/    always-on account resources: plan role, boundary, reaper, budg
 src/reaper/       the TTL reaper Lambda function
 tests/matrix.yaml connectivity matrix, the test contract
 tests/unit/       unit tests (the reaper against moto, the matrix runner against a fake SSM)
-scripts/          lab.sh, account and state setup, matrix tool and probe, lint
-docs/results/     connectivity matrix reports from real lab sessions
+scripts/          lab.sh, account and state setup, matrix and failover tools and probes, lint
+docs/results/     connectivity matrix and failover reports from real lab sessions
 docs/adr/         architecture decision records
 docs/architecture.svg  the diagram above, updated after every milestone
 ```
