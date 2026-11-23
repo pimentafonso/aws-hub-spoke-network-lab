@@ -1,6 +1,7 @@
 # A dual-stack VPC with three subnet tiers, one route table per tier:
 #
-#   private  workloads; IPv6 leaves through the VPC's own egress-only gateway
+#   private  workloads; IPv6 leaves through the VPC's own egress-only gateway,
+#            unless var.ipv6_egress is off (an isolated VPC)
 #   tgw      small subnets that hold the Transit Gateway attachment's ENIs
 #   public   only when var.public is set (the hub's NAT and internet gateway)
 #
@@ -28,7 +29,7 @@ locals {
 }
 
 resource "aws_vpc" "this" {
-  #checkov:skip=CKV2_AWS_11:Flow logs to S3 are added in M4, for the Athena evidence.
+  #checkov:skip=CKV2_AWS_11:The root module adds flow logs to S3 for every VPC (flowlogs.tf); Checkov cannot follow the module.
   cidr_block                       = var.cidr
   assign_generated_ipv6_cidr_block = true
   enable_dns_support               = true
@@ -74,14 +75,18 @@ resource "aws_route_table_association" "this" {
 # centralised through the hub: replies are routed to the VPC that owns the
 # address, so each VPC needs its own (docs/adr/0005).
 resource "aws_egress_only_internet_gateway" "this" {
+  count = var.ipv6_egress ? 1 : 0
+
   vpc_id = aws_vpc.this.id
   tags   = { Name = var.name }
 }
 
 resource "aws_route" "private_ipv6_egress" {
+  count = var.ipv6_egress ? 1 : 0
+
   route_table_id              = aws_route_table.this["private"].id
   destination_ipv6_cidr_block = "::/0"
-  egress_only_gateway_id      = aws_egress_only_internet_gateway.this.id
+  egress_only_gateway_id      = aws_egress_only_internet_gateway.this[0].id
 }
 
 resource "aws_internet_gateway" "this" {

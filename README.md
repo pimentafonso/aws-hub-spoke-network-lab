@@ -55,8 +55,8 @@ Each milestone is one session. Costs are estimates from the AWS Price List
 |---|---|---|---|---|
 | M0 | Repository bootstrap: layout, connectivity matrix format, lint and tests in CI, ADRs | 0 h | $0 | done |
 | M1 | Account root: state, GitHub plan role, boundary, TTL reaper, budget | ~0.5 h | ~$0.01 | done |
-| M2 | VPCs, Transit Gateway segmentation, centralised egress, matrix runner | 0.3 h | ~$0.65 | done, billed cost pending |
-| M3 | Site-to-site VPN with BGP, tunnel failover measurement | 0.5 h | ~$0.18 | done, billed cost pending |
+| M2 | VPCs, Transit Gateway segmentation, centralised egress, matrix runner | 0.3 h | ~$0.65 | done; billed with M3, see below |
+| M3 | Site-to-site VPN with BGP, tunnel failover measurement | 0.5 h | ~$0.18 | done; $0.28 billed for M2 and M3 together |
 | M4 | PrivateLink across overlapping CIDRs, flow logs with Athena, Reachability Analyzer | ~3 h | ~$2.10 | planned |
 | M5 | End-to-end session, safety net test, cost from the bill, write-up | ~2.5 h | ~$1.65 | planned |
 | M6 | Optional: hybrid DNS with Route 53 Resolver endpoints | ~1.5 h | ~$1.30 | planned |
@@ -107,8 +107,8 @@ session:
   hub host, which still showed as online. Its result arrived later, and a run
   a few minutes after that passed. Changing the egress cuts the lab's
   management plane too.
-- The billed cost of the session replaces the estimate once Cost Explorer has
-  it.
+- Billed cost: see below. M2 and M3 ran on the same day, and Cost Explorer's
+  finest free granularity is a day, so they are billed together.
 
 **Measured, 20 November 2026 (M3).** With the VPN up, the 16 M3 rows passed
 on the first run:
@@ -122,6 +122,25 @@ passed. Destroying the 261 resources and checking for leftovers took 5 min
 30 s, and a direct check found no VPC, Transit Gateway, attachment, VPN
 connection, customer gateway, NAT, Elastic IP, instance, volume, network
 interface or VPN key parameter left.
+
+**Billed, 20 November 2026 (M2 and M3).** Cost Explorer, queried on 23
+November for the `Project` tag, shows **$0.279** for the day before credits
+and $0.00 after them; AWS still marks it estimated.
+
+| Usage | Quantity | Cost |
+|---|---|---|
+| NAT Gateway hours | 3 h | $0.144 |
+| Transit Gateway attachment hours | 1 h | $0.050 |
+| VPN connection hours (M3 only) | 1 h | $0.050 |
+| t4g.micro instance hours | 2.76 h | $0.025 |
+| Public IPv4 addresses | 1.23 h | $0.006 |
+| EBS, S3 requests and the rest | | $0.003 |
+
+Two things do not add up yet. Three Transit Gateway attachments ran in each
+session, so I expected about 6 attachment-hours, not 1; the untagged view
+shows the same 1 hour, so it is not a tagging gap. And about 0.6 h of public
+IPv4 address time was billed without the lab's tag (about $0.003). Both are
+checked again when the month's bill is final.
 
 ## VPN failover
 
@@ -201,8 +220,8 @@ infra/account/    always-on account resources: plan role, boundary, reaper, budg
 src/reaper/       the TTL reaper Lambda function
 tests/matrix.yaml connectivity matrix, the test contract
 tests/unit/       unit tests (the reaper against moto, the matrix runner against a fake SSM)
-scripts/          lab.sh, account and state setup, matrix and failover tools and probes, lint
-docs/results/     connectivity matrix and failover reports from real lab sessions
+scripts/          lab.sh, account and state setup, matrix, failover and evidence tools, probes, lint
+docs/results/     matrix, failover, flow log and Reachability Analyzer reports from real sessions
 docs/adr/         architecture decision records
 docs/architecture.svg  the diagram above, updated after every milestone
 ```
@@ -230,6 +249,8 @@ to apply). For plan on pull requests, add the repository secrets
 bash scripts/lab.sh deploy 4     # expires in 4 hours (1-10), then runs the matrix
 bash scripts/lab.sh matrix       # run the matrix again; the report goes to docs/results/
 bash scripts/lab.sh failover     # cut VPN tunnel 1 three times and measure the BGP failover
+bash scripts/lab.sh evidence     # run the matrix, then check every row against the flow logs
+bash scripts/lab.sh reachability # Reachability Analyzer on three paths, $0.10 each
 bash scripts/lab.sh status       # billable resources and their expiry
 bash scripts/lab.sh extend 2     # expiry moves to 2 hours from now
 bash scripts/lab.sh destroy      # destroy, then check nothing billable is left
@@ -269,6 +290,7 @@ Checkov and pytest pin conflicting versions of `packaging`.
 - [ADR 4: Terraform state and GitHub access to AWS](docs/adr/0004-state-and-github-access.md)
 - [ADR 5: Centralised IPv4 egress, per-VPC IPv6 egress](docs/adr/0005-centralised-ipv4-egress-per-vpc-ipv6-egress.md)
 - [ADR 6: Site-to-site VPN with BGP, active/standby, and a route table per spoke](docs/adr/0006-site-to-site-vpn-with-bgp.md)
+- [ADR 7: PrivateLink across an overlapping range, and flow logs as evidence](docs/adr/0007-privatelink-and-flow-log-evidence.md)
 
 ## Licence
 
