@@ -294,3 +294,44 @@ def test_failover_save_writes_the_strongswan_log_beside_the_report(tmp_path):
     log = (tmp_path / "m4-failover-2026-11-23T1500Z-strongswan.log").read_text(encoding="utf-8")
     assert log.startswith("# run 1: cut ")
     assert "sending DPD request" in log
+
+
+class FakeEC2:
+    def __init__(self, status="succeeded"):
+        self.status = status
+        self.deleted = []
+
+    def start_network_insights_analysis(self, NetworkInsightsPathId):
+        return {"NetworkInsightsAnalysis": {"NetworkInsightsAnalysisId": "nia-1"}}
+
+    def describe_network_insights_analyses(self, NetworkInsightsAnalysisIds):
+        return {
+            "NetworkInsightsAnalyses": [
+                {
+                    "NetworkInsightsAnalysisId": "nia-1",
+                    "Status": self.status,
+                    "NetworkPathFound": False,
+                    "Explanations": [
+                        {
+                            "ExplanationCode": "TGW_RTB_NO_ROUTE_TO_TGW_ATTACHMENT",
+                            "TransitGatewayRouteTable": {"Id": "tgw-rtb-1"},
+                        }
+                    ],
+                }
+            ]
+        }
+
+    def delete_network_insights_analysis(self, NetworkInsightsAnalysisId):
+        self.deleted.append(NetworkInsightsAnalysisId)
+
+
+@pytest.mark.parametrize("status", ["succeeded", "failed"])
+def test_analyses_are_deleted_so_destroy_can_remove_the_paths(outputs, status):
+    ec2 = FakeEC2(status)
+    if status == "failed":
+        with pytest.raises(evidence.RunnerError):
+            evidence.analyse_paths(ec2, load(), outputs, sleep=lambda s: None)
+    else:
+        [a] = evidence.analyse_paths(ec2, load(), outputs, sleep=lambda s: None)
+        assert a.passed
+    assert ec2.deleted == ["nia-1"]

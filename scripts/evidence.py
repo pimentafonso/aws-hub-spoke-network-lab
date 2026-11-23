@@ -30,7 +30,7 @@ import argparse
 import ipaddress
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -388,6 +388,22 @@ def analyse_paths(
         ]["NetworkInsightsAnalysisId"]
         for name, p in paths.items()
     }
+    try:
+        done = _wait_for_analyses(ec2, started, sleep, timeout, clock)
+    finally:
+        # A path cannot be deleted while it has analyses, so they would block
+        # terraform destroy. The report keeps what they found.
+        _delete_analyses(ec2, started.values())
+    return [summarise(n, matching_check(matrix, outputs, paths[n]), done[n]) for n in paths]
+
+
+def _wait_for_analyses(
+    ec2: Any,
+    started: dict[str, str],
+    sleep: Callable[[float], None],
+    timeout: float,
+    clock: Callable[[], float],
+) -> dict[str, dict]:
     deadline = clock() + timeout
     done: dict[str, dict] = {}
     while len(done) < len(started):
@@ -406,7 +422,15 @@ def analyse_paths(
                 done[name] = a
         if len(done) < len(started) and clock() > deadline:
             raise RunnerError(f"analyses not finished after {timeout:.0f} s")
-    return [summarise(n, matching_check(matrix, outputs, paths[n]), done[n]) for n in paths]
+    return done
+
+
+def _delete_analyses(ec2: Any, ids: Iterable[str]) -> None:
+    for aid in ids:
+        try:
+            ec2.delete_network_insights_analysis(NetworkInsightsAnalysisId=aid)
+        except Exception as exc:  # report it and carry on with the rest
+            print(f"Could not delete analysis {aid}: {exc}", file=sys.stderr)
 
 
 def reachability_report(analyses: list[Analysis]) -> str:
