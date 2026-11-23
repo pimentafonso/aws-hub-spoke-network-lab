@@ -6,6 +6,8 @@
 #   bash scripts/lab.sh extend <hours>   move the expiry to <hours> from now (tags only)
 #   bash scripts/lab.sh matrix           run the connectivity matrix and save the report
 #   bash scripts/lab.sh failover [runs]  cut VPN tunnel 1 and measure the BGP failover (default 3 runs)
+#   bash scripts/lab.sh evidence         run the matrix, then check each row against the flow logs
+#   bash scripts/lab.sh reachability     run Reachability Analyzer on the lab's paths ($0.10 each)
 #   bash scripts/lab.sh destroy          terraform destroy, then fail if anything
 #                                        billable with the lab's tag is still there
 #   bash scripts/lab.sh status           list billable lab resources and their expiry
@@ -21,7 +23,7 @@ cd "$(dirname "$0")/.."
 source scripts/lib.sh
 
 usage() {
-  sed -n '4,12p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '4,14p' "$0" | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -77,6 +79,17 @@ case "${1:-}" in
     tf_init lab
     write_outputs
     run_python scripts/failover.py run --outputs "$OUTPUTS" --runs "${2:-3}" --save docs/results
+    ;;
+  evidence)
+    tf_init lab
+    since=$(date +%s)
+    matrix
+    run_python scripts/evidence.py flowlogs --outputs "$OUTPUTS" --since "$since"       --until "$(date +%s)" --save docs/results
+    ;;
+  reachability)
+    tf_init lab
+    write_outputs
+    run_python scripts/evidence.py reachability --outputs "$OUTPUTS" --save docs/results
     ;;
   destroy)
     tf_init lab

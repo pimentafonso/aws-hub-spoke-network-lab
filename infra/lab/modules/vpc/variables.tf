@@ -18,6 +18,12 @@ variable "azs" {
   type        = list(string)
 }
 
+variable "ipv6_egress" {
+  description = "Give the private subnets an egress-only internet gateway for IPv6."
+  type        = bool
+  default     = true
+}
+
 variable "public" {
   description = "Create public subnets and an internet gateway."
   type        = bool

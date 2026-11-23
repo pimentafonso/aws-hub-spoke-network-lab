@@ -11,7 +11,9 @@ The tunnels are active/standby (docs/adr/0006). Each run:
    router would when its link comes back;
 4. collects the probe's results, the router's BGP neighbour changes (FRR logs
    them with millisecond timestamps), its route to spoke A and the packet
-   counters of both tunnel interfaces, and the tunnel status AWS reports.
+   counters of both tunnel interfaces, and the tunnel status AWS reports;
+5. keeps strongSwan's log for tunnel 1, so a slow failback can be explained
+   (saved next to the report as <report>-strongswan.log).
 
 The outage is the time from the last connection that succeeded before the cut
 to the first that succeeded after it, on the on-prem host's clock. Detection
@@ -135,6 +137,7 @@ class RunResult:
     path: dict[str, str]  # sample name -> interface carrying traffic to spoke A
     inbound: dict[str, dict[str, int]]  # phase -> interface -> packets received
     aws: list[tuple[float, str, str]] = field(default_factory=list)  # (t, tunnel, status)
+    charon: str = ""  # strongSwan's log lines for tunnel 1 during the run
 
     @property
     def detection(self) -> float | None:
@@ -282,6 +285,19 @@ def journal_command(since: float) -> str:
     )
 
 
+# SSM keeps at most 24,000 characters of output: the last 150 lines, cut short.
+CHARON_LINES = 150
+CHARON_WIDTH = 150
+
+
+def charon_command(since: float, connection: str = "tunnel1") -> str:
+    """strongSwan's log for one connection since `since`, from the journal."""
+    return (
+        f"journalctl -u strongswan -o short-iso-precise --since @{int(since) - 1} --no-pager "
+        f"| grep -F '<{connection}|' | tail -n {CHARON_LINES} | cut -c 1-{CHARON_WIDTH} || true"
+    )
+
+
 BGP_SUMMARY = "vtysh -c 'show bgp ipv4 unicast summary json'"
 
 
@@ -397,14 +413,27 @@ def one_run(number: int, ssm: Any, ec2: Any, outputs: dict[str, Any]) -> RunResu
     samples["end"] = sample(sample_command(spoke_a))
     probe = json.loads(run_command(ssm, onprem, read_probe_command(), timeout=120))
     journal = run_command(ssm, router, journal_command(samples["start"]["t"]))
-    return analyse(number, samples, probe, journal, tunnel1["aws"], aws)
+    result = analyse(number, samples, probe, journal, tunnel1["aws"], aws)
+    result.charon = run_command(ssm, router, charon_command(samples["start"]["t"], tunnel1["name"]))
+    return result
 
 
-def save(results: list[RunResult], directory: Path, now: datetime) -> Path:
+def save(results: list[RunResult], directory: Path, now: datetime, stage: str = "m3") -> Path:
+    """Write the report, and strongSwan's log for each run beside it."""
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"m3-failover-{now.strftime('%Y-%m-%dT%H%MZ')}.md"
+    path = directory / f"{stage}-failover-{now.strftime('%Y-%m-%dT%H%MZ')}.md"
+    log = "".join(
+        f"# run {r.number}: cut {_stamp(r.cut)} UTC, restored {_stamp(r.restore)} UTC\n"
+        f"{r.charon.rstrip()}\n\n"
+        for r in results
+        if r.charon.strip()
+    )
+    if log:
+        path.with_name(path.stem + "-strongswan.log").write_text(
+            log, encoding="utf-8", newline="\n"
+        )
     header = (
-        "# VPN tunnel failover: m3\n\n"
+        f"# VPN tunnel failover: {stage}\n\n"
         f"Run at {now.strftime('%Y-%m-%d %H:%M:%S')} UTC by `scripts/failover.py run`. "
         f"The on-prem host opened a TCP connection to spoke A's port 80 every {INTERVAL} s "
         f"with a {TIMEOUT} s timeout. Tunnel 1 was cut after {BASELINE} s by dropping all "
@@ -454,7 +483,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(report(results))
     if args.save:
-        print(f"Saved to {save(results, args.save, datetime.now(UTC))}")
+        print(f"Saved to {save(results, args.save, datetime.now(UTC), outputs['stage'])}")
     recovered = all(r.outage is not None and r.bgp_down is not None for r in results)
     return 0 if recovered else 1
 

@@ -21,4 +21,4 @@ addopts = "-q"
 
 [tool.ruff.lint.isort]
 # The test and measurement scripts are imported by the tests as modules.
-known-first-party = ["failover", "matrix", "reaper"]
+known-first-party = ["evidence", "failover", "matrix", "reaper"]

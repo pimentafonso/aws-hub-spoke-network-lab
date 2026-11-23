@@ -18,6 +18,7 @@ output "hosts" {
       vpc         = vpc
       ipv4        = aws_instance.host[name].private_ip
       ipv6        = one(aws_instance.host[name].ipv6_addresses)
+      eni         = aws_instance.host[name].primary_network_interface_id
     }
   }
 }
@@ -54,5 +55,37 @@ output "vpn" {
         aws     = t.aws
       }
     ]
+  }
+}
+
+# Read by scripts/matrix.py: the consumer's probe connects to this name.
+output "privatelink_endpoint_dns" {
+  description = "DNS name of the consumer's interface endpoint for spoke A's service."
+  value       = aws_vpc_endpoint.privatelink.dns_entry[0].dns_name
+}
+
+# Read by scripts/evidence.py.
+output "privatelink" {
+  description = "The endpoint's network interfaces and the NLB's fixed node addresses."
+  value = {
+    endpoint_enis = aws_vpc_endpoint.privatelink.network_interface_ids
+    nlb_ips       = local.nlb_ips
+  }
+}
+
+output "flow_logs" {
+  description = "Where the flow logs land and how to query them."
+  value = {
+    bucket    = aws_s3_bucket.flow_logs.bucket
+    database  = aws_glue_catalog_database.flow_logs.name
+    table     = aws_glue_catalog_table.flow_logs.name
+    workgroup = aws_athena_workgroup.lab.name
+  }
+}
+
+output "reachability_paths" {
+  description = "Reachability Analyzer path IDs by name, with the matrix row each repeats."
+  value = {
+    for name, p in local.reachability_paths : name => merge(p, { id = aws_ec2_network_insights_path.matrix[name].id })
   }
 }
