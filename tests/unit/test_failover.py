@@ -175,6 +175,17 @@ def test_established_reads_frr_summary():
     assert failover.established("") == set()
 
 
+def test_a_session_without_routes_is_not_ready():
+    summary = {
+        "peers": {
+            "169.254.10.1": {"state": "Established", "pfxRcd": 2},
+            "169.254.11.1": {"state": "Established", "pfxRcd": 0},
+        }
+    }
+    assert failover.established(json.dumps(summary)) == {"169.254.10.1", "169.254.11.1"}
+    assert failover.established(json.dumps(summary), with_routes=True) == {"169.254.10.1"}
+
+
 class FakeSSM:
     class exceptions:
         class InvocationDoesNotExist(Exception):
@@ -209,3 +220,52 @@ def test_wait_without_a_vpn_is_a_no_op(tmp_path, monkeypatch, capsys):
     assert failover.main(["wait", "--outputs", str(outputs)]) == 0
     assert "no VPN" in capsys.readouterr().out
     assert failover.main(["run", "--outputs", str(outputs)]) == 1
+
+
+class SilentAWS:
+    """Both sessions up; AWS sends routes only after the router resets them."""
+
+    class exceptions:
+        class InvocationDoesNotExist(Exception):
+            pass
+
+    def __init__(self):
+        self.commands = []
+
+    def describe_instance_information(self, Filters):
+        return {"InstanceInformationList": [{"InstanceId": "i-r", "PingStatus": "Online"}]}
+
+    def describe_vpn_connections(self, VpnConnectionIds):
+        telemetry = [
+            {"OutsideIpAddress": a, "Status": "UP"} for a in ("198.51.100.1", "198.51.100.2")
+        ]
+        return {"VpnConnections": [{"VgwTelemetry": telemetry}]}
+
+    def send_command(self, InstanceIds, DocumentName, Parameters, **kwargs):
+        self.commands.append(Parameters["commands"][0])
+        return {"Command": {"CommandId": str(len(self.commands))}}
+
+    def get_command_invocation(self, CommandId, InstanceId):
+        routes = 2 if failover.BGP_RESET in self.commands else 0
+        peers = {
+            p: {"state": "Established", "pfxRcd": routes} for p in ("169.254.10.1", "169.254.11.1")
+        }
+        return {"Status": "Success", "StandardOutputContent": json.dumps({"peers": peers})}
+
+
+def test_wait_resets_sessions_that_carry_no_routes(capsys):
+    aws = SilentAWS()
+    vpn = {
+        "router_instance_id": "i-r",
+        "connection_id": "vpn-1",
+        "tunnels": [{"aws": "169.254.10.1"}, {"aws": "169.254.11.1"}],
+    }
+    now = [0.0]
+
+    def sleep(seconds):
+        now[0] += seconds
+
+    failover.wait_ready(aws, aws, vpn, sleep=sleep, clock=lambda: now[0])
+    assert aws.commands.count(failover.BGP_RESET) == 1
+    assert now[0] >= failover.SILENT_AFTER
+    assert "resetting them" in capsys.readouterr().out

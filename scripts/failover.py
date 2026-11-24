@@ -291,10 +291,17 @@ CHARON_WIDTH = 150
 
 
 def charon_command(since: float, connection: str = "tunnel1") -> str:
-    """strongSwan's log for one connection since `since`, from the journal."""
+    """strongSwan's log for one connection since `since`, from the journal.
+
+    On 24 November 2026 a grep for the `<tunnel1|` prefix found nothing in any
+    run. charon-systemd appears to keep the connection's name in the
+    IKE_SA_NAME journal field rather than in the message, so this filters on
+    the field; it is unconfirmed until the next session's failover run.
+    """
     return (
-        f"journalctl -u strongswan -o short-iso-precise --since @{int(since) - 1} --no-pager "
-        f"| grep -F '<{connection}|' | tail -n {CHARON_LINES} | cut -c 1-{CHARON_WIDTH} || true"
+        f"journalctl -u strongswan IKE_SA_NAME={connection} -o short-iso-precise "
+        f"--since @{int(since) - 1} --no-pager "
+        f"| tail -n {CHARON_LINES} | cut -c 1-{CHARON_WIDTH} || true"
     )
 
 
@@ -333,10 +340,25 @@ def run_command(
             raise RunnerError(f"{instance_id}: no result after {timeout:.0f} s")
 
 
-def established(summary_json: str) -> set[str]:
-    """Peers in state Established, from `show bgp ipv4 unicast summary json`."""
+def established(summary_json: str, with_routes: bool = False) -> set[str]:
+    """Peers in state Established, from `show bgp ipv4 unicast summary json`.
+
+    With with_routes, only peers that have also sent at least one prefix.
+    """
     peers = json.loads(summary_json or "{}").get("peers", {})
-    return {p for p, s in peers.items() if s.get("state") == "Established"}
+    return {
+        p
+        for p, s in peers.items()
+        if s.get("state") == "Established" and (not with_routes or s.get("pfxRcd", 0) > 0)
+    }
+
+
+# On 24 November 2026 both sessions came up while Terraform was still creating
+# the Transit Gateway route table association and propagations, and AWS sent
+# no prefixes on either session until they were reset. A soft refresh did not
+# help; a hard reset brought both routes within seconds.
+BGP_RESET = "vtysh -c 'clear ip bgp *'"
+SILENT_AFTER = 120.0
 
 
 def tunnel_status(ec2: Any, connection_id: str) -> dict[str, str]:
@@ -353,16 +375,35 @@ def wait_ready(
     sleep: Callable[[float], None] = _sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> None:
-    """Wait until AWS reports both tunnels UP and the router has both sessions."""
+    """Wait until AWS reports both tunnels UP and both sessions carry routes.
+
+    If both sessions are up but AWS has sent no routes for SILENT_AFTER
+    seconds, reset them once.
+    """
     router = vpn["router_instance_id"]
     wait_online(ssm, [router], timeout=timeout, sleep=sleep, clock=clock)
     peers = {t["aws"] for t in vpn["tunnels"]}
     deadline = clock() + timeout
+    silent_since: float | None = None
+    reset = False
     while True:
         status = tunnel_status(ec2, vpn["connection_id"])
         up = set(status.values()) == {"UP"} and len(status) == len(vpn["tunnels"])
-        if up and peers <= established(run_command(ssm, router, BGP_SUMMARY, sleep=sleep)):
-            return
+        if up:
+            summary = run_command(ssm, router, BGP_SUMMARY, sleep=sleep)
+            if peers <= established(summary, with_routes=True):
+                return
+            if peers <= established(summary):
+                silent_since = silent_since if silent_since is not None else clock()
+                if not reset and clock() - silent_since >= SILENT_AFTER:
+                    print(
+                        f"Both BGP sessions up but no routes from AWS for "
+                        f"{SILENT_AFTER:.0f} s; resetting them."
+                    )
+                    run_command(ssm, router, BGP_RESET, sleep=sleep)
+                    reset = True
+            else:
+                silent_since = None
         if clock() > deadline:
             raise RunnerError(f"VPN not ready after {timeout:.0f} s: AWS reports {status}")
         sleep(15)
@@ -432,6 +473,8 @@ def save(results: list[RunResult], directory: Path, now: datetime, stage: str = 
         path.with_name(path.stem + "-strongswan.log").write_text(
             log, encoding="utf-8", newline="\n"
         )
+    else:
+        print("No strongSwan log lines for tunnel 1 in any run; none saved.", file=sys.stderr)
     header = (
         f"# VPN tunnel failover: {stage}\n\n"
         f"Run at {now.strftime('%Y-%m-%d %H:%M:%S')} UTC by `scripts/failover.py run`. "

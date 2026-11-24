@@ -5,10 +5,12 @@ centralised egress, site-to-site VPN with BGP, PrivateLink across overlapping
 CIDRs, and an automated connectivity test. Each session deploys it, measures
 it and destroys it.
 
-> **Status:** work in progress. M4 (PrivateLink across an overlapping range,
-> flow logs with Athena, Reachability Analyzer) has been deployed, tested and
-> destroyed; M5, a full session with the bill and the write-up, is next. The
-> safety net is live. Every number here is measured, with how and when.
+> **Status:** M0 to M5 are done. M5 ran the whole lab end to end and left it
+> for the TTL reaper, which missed two resources; that is fixed and tested,
+> and the full-lab rerun is due in the next session. Billed figures for 23
+> and 24 November follow when Cost Explorer has them. M6 (hybrid DNS) is
+> optional. Every number here is measured, with how and when. The
+> [write-up](docs/write-up.md) tells the story.
 
 ## What it will show
 
@@ -57,7 +59,7 @@ Each milestone is one session. Costs are estimates from the AWS Price List
 | M2 | VPCs, Transit Gateway segmentation, centralised egress, matrix runner | 0.3 h | ~$0.65 | done; billed with M3, see below |
 | M3 | Site-to-site VPN with BGP, tunnel failover measurement | 0.5 h | ~$0.18 | done; $0.28 billed for M2 and M3 together |
 | M4 | PrivateLink across overlapping CIDRs, flow logs with Athena, Reachability Analyzer | 0.5 h | ~$0.50 | done; bill not in yet |
-| M5 | End-to-end session, safety net test, cost from the bill, write-up | ~2.5 h | ~$1.65 | planned |
+| M5 | End-to-end session, safety net test, cost from the bill, write-up | 1.1 h, 2 resources 1.8 h | ~$0.70 | done; reaper missed 2, fixed; bill not in yet |
 | M6 | Optional: hybrid DNS with Route 53 Resolver endpoints | ~1.5 h | ~$1.30 | planned |
 
 ## The connectivity matrix
@@ -152,6 +154,21 @@ The three new rows are the consumer VPC, which uses spoke A's range:
   the consumer VPC has it.
 - Its probe to the internet timed out; it has no route out.
 
+**Measured, 24 November 2026 (M5).** The first two runs failed the three VPN
+rows and passed the other 16:
+[0025Z](docs/results/m4-nat-gateway-2026-11-24T0025Z.md),
+[0026Z](docs/results/m4-nat-gateway-2026-11-24T0026Z.md). Both BGP sessions
+were Established, but AWS had sent no prefixes on either, and AWS's own
+telemetry showed both tunnels UP. The sessions had come up while Terraform was
+still creating the VPN attachment's route table association and propagations.
+A soft refresh (`clear ip bgp * soft in`) changed nothing; a hard reset at
+00:28:02 brought 10.0.0.0/16 and 10.1.0.0/16 on both sessions within 12 s,
+and the next run passed 19 of 19:
+[0028Z](docs/results/m4-nat-gateway-2026-11-24T0028Z.md). The failover
+script's readiness check now waits for routes, not only Established, and
+resets the sessions once if AWS sends none for 120 s. (The session ran with
+the M4 stage, so its reports carry the `m4-` prefix.)
+
 ## Evidence: flow logs and Reachability Analyzer
 
 A timeout looks the same whatever stopped it, so M4 checks that the layer each
@@ -212,6 +229,11 @@ analyzer reports a blackhole match with the same code as a missing route.
   $0.30 of it the analyses; the billed figure follows when Cost Explorer has
   it.
 
+**Flow logs, 24 November 2026 (M5).** 15 of 15 rows confirmed again, with
+every row's evidence in Athena 4.5 minutes after the probes ended:
+[m4-flowlogs-2026-11-24T0033Z](docs/results/m4-flowlogs-2026-11-24T0033Z.md).
+Reachability Analyzer was not repeated.
+
 ## VPN failover
 
 `bash scripts/lab.sh failover` cuts tunnel 1 on the on-prem router by dropping
@@ -250,6 +272,25 @@ re-initiates the tunnel. BGP uses AWS's timers: keepalive 10 s, hold 30 s.
   after the restore. It lags the data path by a minute or more, so it is no
   use for timing a failover.
 
+**Measured, 24 November 2026 (M5),** three runs
+([m4-failover-2026-11-24T0045Z](docs/results/m4-failover-2026-11-24T0045Z.md)):
+
+| Run | BGP down after | Outage | Probes lost | Path while cut | BGP up after restore |
+|---|---|---|---|---|---|
+| 1 | 29.3 s | 45.8 s | 91 | tunnel 2 | 3.9 s |
+| 2 | 23.6 s | 39.3 s | 78 | tunnel 2 | 3.1 s |
+| 3 | 21.6 s | 37.8 s | 75 | tunnel 2 | 2.8 s |
+
+- **Median outage 39.3 s**, against 41.3 s in M3: over six runs in two
+  sessions the outage was 37.8 to 45.8 s, and detection 21.5 to 29.3 s.
+- Failback lost no probes and BGP came back within 4 s each time. M3's 50 s
+  failback did not recur. The strongSwan log meant to explain it came back
+  empty in all three runs: the script filtered on a message prefix that
+  charon-systemd does not write. The filter now uses the journal field
+  instead, unconfirmed until the next failover run.
+- AWS's telemetry showed tunnel 1 down 43 to 96 s after the cut, and up
+  again 32 to 73 s after the restore.
+
 ## Cost control
 
 The full lab costs about $0.44 an hour while deployed (estimate, since M4), so it never stays up. Four
@@ -275,7 +316,58 @@ The next scheduled reaper run started at 19:00:33 and released it at
 19:00:37.9, from the reaper's CloudWatch log: 9 min 45 s from expiry to
 deletion, within the 15-minute schedule. A run with nothing to delete takes
 4 to 5.5 s. The worst case for a lab is the time to the next run plus the
-deletion passes; M5 measures that on a full lab.
+deletion passes.
+
+**Measured, 24 November 2026 (M5): a full lab left to the reaper.** The lab
+was deployed with `ExpiresAt` 01:10:00 UTC and nobody destroyed it. A
+watcher listed the billable resources every minute, and the reaper's log
+gives its side:
+
+| Time (UTC) | Billable resources | Event |
+|---|---|---|
+| 01:10:00 | 29 | expiry |
+| 01:15:33 | 29 | first reaper run after expiry starts |
+| 01:16:31 | 9 | deletions under way |
+| 01:18:38 | 2 | 27 of 29 gone, 8.6 min after expiry |
+| 01:24:18 | 2 | run ends after 26 passes: the NLB and one Elastic IP remain |
+| 01:30, 01:45 | 2 | the next runs delete nothing |
+| 01:56 | 2 | 45 min after expiry: manual `lab.sh destroy` |
+| 02:00:07 | 0 | 272 resources destroyed; a direct check finds nothing left |
+
+**The safety net failed this test.** Two gaps, both now fixed:
+
+- The NLB could not be deleted while the PrivateLink endpoint service still
+  fronted it (`ResourceInUse` on every pass). The reaper now deletes an
+  expired NLB's endpoint services first.
+- The VPN router's Elastic IP sits on the router's own network interface,
+  which outlives the instance, so the address stayed associated and the
+  reaper skipped it. An expired address on an interface attached to nothing
+  is now disassociated and released.
+
+The fix needed two new actions in both the reaper's policy and the account's
+permissions boundary. The IAM policy simulator allows them on resources with
+the lab's tag and refuses them otherwise. A targeted test at 02:49 UTC
+recreated both cases, an NLB behind an endpoint service and an Elastic IP on
+a detached interface, both expired: one reaper invocation deleted both in a
+single 7 s pass
+([reaper-targeted-2026-11-24T0249Z](docs/results/reaper-targeted-2026-11-24T0249Z.md)).
+A full lab cleared by the scheduled reaper alone is still to be shown, in the
+next session. The two resources ran about 50 minutes longer than intended,
+about $0.03.
+
+**Session, 24 November 2026 (M5).**
+
+- The first `terraform apply` started at 00:10 and failed at 00:20:17 with
+  `ExpiredToken`, leaving `errored.tfstate` and a stale state lock. The
+  scripts ran on credentials exported from an `aws login` profile, which
+  expired within about 15 minutes. I released the lock, pushed the saved
+  state, waited for the VPN connection AWS had finished creating, untainted
+  it and applied the remaining 26 resources by 00:23:14. Terraform and
+  boto3 now use the profile directly and refresh it themselves
+  (`botocore[crt]`), and nothing exports credentials.
+- The lab was up from 00:10 to 01:18 UTC, and the NLB and Elastic IP until
+  about 02:00. The estimate is about $0.70; the billed figure follows when
+  Cost Explorer has the day.
 
 ```
 $ bash scripts/lab.sh status
@@ -293,6 +385,7 @@ tests/unit/       unit tests (the reaper against moto, the matrix runner against
 scripts/          lab.sh, account and state setup, matrix, failover and evidence tools, probes, lint
 docs/results/     matrix, failover, flow log and Reachability Analyzer reports from real sessions
 docs/adr/         architecture decision records
+docs/write-up.md  what was built, measured and learned, session by session
 docs/architecture.svg  the diagram above, updated after every milestone
 ```
 

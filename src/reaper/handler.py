@@ -7,7 +7,10 @@ it is older than the hard cap (MAX_AGE_HOURS) whatever the tag says.
 
 Only resources that bill by the hour or by the GB are deleted, most expensive
 first. Free resources (VPCs, subnets, security groups, the transit gateway
-itself, customer gateways, S3 buckets) are left for `lab.sh destroy`.
+itself, customer gateways, S3 buckets) are left for `lab.sh destroy`, except
+where one blocks a billable delete: an endpoint service in front of a load
+balancer goes with it, and an Elastic IP left on a detached network interface
+is disassociated before it is released.
 
 The reaper never trusts a list alone: the Resource Groups Tagging API keeps
 returning resources for a while after they are deleted, so every resource is
@@ -199,9 +202,55 @@ def _elastic_ips(c: Clients) -> Iterator[Resource]:
     for a in c.ec2.describe_addresses(Filters=TAG_FILTER)["Addresses"]:
         tags = _tags(a.get("Tags"))
         if _ours(tags):
-            # Released only once nothing uses it (a NAT gateway being deleted, say).
-            state = "associated" if a.get("AssociationId") else "unassociated"
-            yield Resource("elastic-ip", a["AllocationId"], state, tags)
+            yield Resource("elastic-ip", a["AllocationId"], _address_state(c, a), tags)
+
+
+def _address_state(c: Clients, address: dict) -> str:
+    """unassociated, stranded (on a network interface no longer attached to
+    anything, so it holds the address forever), or associated (in use, by an
+    instance or by a NAT gateway being deleted, say: released on a later pass)."""
+    if not address.get("AssociationId"):
+        return "unassociated"
+    eni = address.get("NetworkInterfaceId")
+    if address.get("InstanceId") or not eni:
+        return "associated"
+    try:
+        interfaces = c.ec2.describe_network_interfaces(NetworkInterfaceIds=[eni])
+    except ClientError:
+        return "associated"
+    status = interfaces["NetworkInterfaces"][0].get("Status")
+    return "stranded" if status == "available" else "associated"
+
+
+def _release_address(c: Clients, allocation_id: str) -> None:
+    address = c.ec2.describe_addresses(AllocationIds=[allocation_id])["Addresses"][0]
+    if address.get("AssociationId"):
+        c.ec2.disassociate_address(AssociationId=address["AssociationId"])
+    c.ec2.release_address(AllocationId=allocation_id)
+
+
+def _delete_load_balancer(c: Clients, arn: str) -> None:
+    """Delete the endpoint services in front of a load balancer, then the
+    load balancer: AWS refuses to delete one that still serves an endpoint
+    service (ResourceInUse). A service fails to go while an endpoint is still
+    connected to it; the endpoint is deleted earlier in the same pass, and
+    the load balancer is retried on the next."""
+    services = [
+        s["ServiceId"]
+        for s in _pages(
+            c.ec2, "describe_vpc_endpoint_service_configurations", "ServiceConfigurations"
+        )
+        if arn in s.get("NetworkLoadBalancerArns", [])
+    ]
+    if services:
+        result = c.ec2.delete_vpc_endpoint_service_configurations(ServiceIds=services)
+        if failed := result.get("Unsuccessful"):
+            error = failed[0].get("Error", {})
+            raise ClientError(
+                {"Error": {"Code": error.get("Code", "EndpointServiceNotDeleted")}},
+                "DeleteVpcEndpointServiceConfigurations",
+            )
+    c.elbv2.delete_load_balancer(LoadBalancerArn=arn)
 
 
 def _volumes(c: Clients) -> Iterator[Resource]:
@@ -232,7 +281,7 @@ KINDS: list[Kind] = [
     Kind(
         "load-balancer",
         _load_balancers,
-        lambda c, i: c.elbv2.delete_load_balancer(LoadBalancerArn=i),
+        _delete_load_balancer,
         frozenset({"active", "active_impaired", "provisioning", "failed"}),
         frozenset(),
     ),
@@ -267,8 +316,8 @@ KINDS: list[Kind] = [
     Kind(
         "elastic-ip",
         _elastic_ips,
-        lambda c, i: c.ec2.release_address(AllocationId=i),
-        frozenset({"unassociated"}),
+        _release_address,
+        frozenset({"unassociated", "stranded"}),
         frozenset({"associated"}),
     ),
     Kind(
