@@ -61,6 +61,8 @@ data "aws_iam_policy_document" "workload_boundary" {
       "ec2:DescribeInstances",
       "ec2:DescribeAddresses",
       "ec2:DescribeVolumes",
+      "ec2:DescribeNetworkInterfaces",
+      "ec2:DescribeVpcEndpointServiceConfigurations",
       "elasticloadbalancing:DescribeLoadBalancers",
       "elasticloadbalancing:DescribeTags",
     ]
@@ -77,7 +79,9 @@ data "aws_iam_policy_document" "workload_boundary" {
       "ec2:DeleteFlowLogs",
       "ec2:TerminateInstances",
       "ec2:ReleaseAddress",
+      "ec2:DisassociateAddress",
       "ec2:DeleteVolume",
+      "ec2:DeleteVpcEndpointServiceConfigurations",
       "elasticloadbalancing:DeleteLoadBalancer",
     ]
     resources = ["*"]

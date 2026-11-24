@@ -29,8 +29,10 @@ hours_from_now() {
   date -u -d "+$1 hours" +%Y-%m-%dT%H:%M:%SZ
 }
 
-# Run a Python script with credentials exported from the AWS CLI. boto3 cannot
-# read `aws login` sessions without botocore[crt], so the CLI hands them over.
+# Run a Python script from the virtualenv if there is one. boto3 reads an
+# `aws login` profile itself with botocore[crt] (requirements-dev.txt) and
+# refreshes it; credentials exported from the CLI expired within 15 minutes,
+# shorter than a session's evidence and failover runs.
 run_python() {
   local python=python3
   if [ -x .venv/Scripts/python ]; then
@@ -38,8 +40,5 @@ run_python() {
   elif [ -x .venv/bin/python ]; then
     python=.venv/bin/python
   fi
-  (
-    eval "$(aws configure export-credentials --format env)"
-    "$python" "$@"
-  )
+  "$python" "$@"
 }

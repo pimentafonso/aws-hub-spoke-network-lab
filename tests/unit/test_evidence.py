@@ -272,7 +272,8 @@ def test_reachability_allow_needs_a_path(outputs):
 def test_charon_command_filters_one_connection():
     cmd = failover.charon_command(SINCE, "tunnel1")
     assert "-u strongswan" in cmd
-    assert "'<tunnel1|'" in cmd
+    assert "IKE_SA_NAME=tunnel1 " in cmd
+    assert "grep" not in cmd
     assert f"tail -n {failover.CHARON_LINES}" in cmd
 
 

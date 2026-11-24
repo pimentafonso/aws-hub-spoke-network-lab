@@ -48,6 +48,8 @@ data "aws_iam_policy_document" "reaper" {
       "ec2:DescribeInstances",
       "ec2:DescribeAddresses",
       "ec2:DescribeVolumes",
+      "ec2:DescribeNetworkInterfaces",
+      "ec2:DescribeVpcEndpointServiceConfigurations",
       "elasticloadbalancing:DescribeLoadBalancers",
       "elasticloadbalancing:DescribeTags",
     ]
@@ -64,7 +66,9 @@ data "aws_iam_policy_document" "reaper" {
       "ec2:DeleteFlowLogs",
       "ec2:TerminateInstances",
       "ec2:ReleaseAddress",
+      "ec2:DisassociateAddress",
       "ec2:DeleteVolume",
+      "ec2:DeleteVpcEndpointServiceConfigurations",
     ]
     resources = [
       "${local.ec2_arn}:vpn-connection/*",
@@ -75,6 +79,8 @@ data "aws_iam_policy_document" "reaper" {
       "${local.ec2_arn}:instance/*",
       "${local.ec2_arn}:elastic-ip/*",
       "${local.ec2_arn}:volume/*",
+      "${local.ec2_arn}:network-interface/*",
+      "${local.ec2_arn}:vpc-endpoint-service/*",
     ]
     condition {
       test     = "StringEquals"

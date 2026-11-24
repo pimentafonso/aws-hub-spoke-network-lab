@@ -215,6 +215,77 @@ def test_blocked_resources_are_left_for_the_next_run(aws):
     assert "Still present" in report.summary()
 
 
+def test_an_address_on_a_detached_interface_is_released(aws):
+    # The VPN router's Elastic IP sits on its own network interface, which
+    # outlives the instance (24 November 2026: the reaper left it behind).
+    tags = lab_tags()
+    vpc = aws.ec2.create_vpc(CidrBlock="10.0.0.0/16")["Vpc"]["VpcId"]
+    subnet = aws.ec2.create_subnet(VpcId=vpc, CidrBlock="10.0.1.0/24")["Subnet"]["SubnetId"]
+    eni = aws.ec2.create_network_interface(
+        SubnetId=subnet, TagSpecifications=spec("network-interface", tags)
+    )["NetworkInterface"]["NetworkInterfaceId"]
+    eip = aws.ec2.allocate_address(Domain="vpc", TagSpecifications=spec("elastic-ip", tags))
+    aws.ec2.associate_address(AllocationId=eip["AllocationId"], NetworkInterfaceId=eni)
+
+    assert [r.state for _, r in handler.existing(aws)] == ["stranded"]
+    report = run(aws)
+    assert report.deleted == [
+        {"kind": "elastic-ip", "id": eip["AllocationId"], "reason": f"expired at {PAST}"}
+    ]
+    assert kinds(aws) == []
+
+
+def _nlb_with_endpoint_service(c):
+    vpc = c.ec2.create_vpc(CidrBlock="10.0.0.0/16")["Vpc"]["VpcId"]
+    subnet = c.ec2.create_subnet(VpcId=vpc, CidrBlock="10.0.1.0/24")["Subnet"]["SubnetId"]
+    lb = c.elbv2.create_load_balancer(
+        Name="nwlab-nlb", Type="network", Subnets=[subnet], Tags=lab_tags()
+    )["LoadBalancers"][0]["LoadBalancerArn"]
+    c.ec2.create_vpc_endpoint_service_configuration(
+        NetworkLoadBalancerArns=[lb], AcceptanceRequired=False
+    )
+    return lb
+
+
+def _services(c):
+    return c.ec2.describe_vpc_endpoint_service_configurations()["ServiceConfigurations"]
+
+
+def test_an_endpoint_service_goes_before_its_load_balancer(aws):
+    # AWS refuses to delete a load balancer behind an endpoint service
+    # (24 November 2026: ResourceInUse on every pass).
+    _nlb_with_endpoint_service(aws)
+    report = run(aws)
+    assert [d["kind"] for d in report.deleted] == ["load-balancer"]
+    assert _services(aws) == []
+    assert kinds(aws) == []
+
+
+def test_a_service_still_in_use_keeps_its_load_balancer_for_a_later_pass(aws, monkeypatch):
+    lb = _nlb_with_endpoint_service(aws)
+    real = aws.ec2.delete_vpc_endpoint_service_configurations
+    calls = {"n": 0}
+
+    def busy_once(**kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {
+                "Unsuccessful": [
+                    {
+                        "Error": {"Code": "ExistingVpcEndpointConnections"},
+                        "ResourceId": kwargs["ServiceIds"][0],
+                    }
+                ]
+            }
+        return real(**kwargs)
+
+    monkeypatch.setattr(aws.ec2, "delete_vpc_endpoint_service_configurations", busy_once)
+    report = run(aws)
+    assert calls["n"] == 2
+    assert report.errors == {}
+    assert report.deleted == [{"kind": "load-balancer", "id": lb, "reason": f"expired at {PAST}"}]
+
+
 class FakeContext:
     def get_remaining_time_in_millis(self):
         return 0

@@ -1,6 +1,7 @@
 # Local development and CI tests. The reaper Lambda gets boto3 from the
 # runtime, so nothing here is packaged into the function.
 boto3==1.44.5
+botocore[crt]==1.44.5
 moto[ec2,elbv2,s3,sns]==5.2.5
 pytest==9.2.0
 pyyaml==6.0.3
